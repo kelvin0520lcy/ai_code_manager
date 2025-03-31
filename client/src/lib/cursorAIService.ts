@@ -530,7 +530,7 @@ export class CursorAIService {
   }
 
   // Initialize with toast provider
-  initToast(toastProvider: { toast: (args: any) => void }) {
+  initToast(toastProvider: any) {
     this.toast = toastProvider;
   }
 

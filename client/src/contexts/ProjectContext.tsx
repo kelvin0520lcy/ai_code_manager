@@ -703,7 +703,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize the cursorAIService
   useEffect(() => {
     // Initialize cursorAIService with toast provider
-    cursorAIService.initToast(toast);
+    const toastFn = (args: any) => toast(args);
+    cursorAIService.initToast({ toast: toastFn });
     
     // Check for stored API key
     const hasCursorAPIKey = localStorage.getItem('hasCursorAPIKey');
