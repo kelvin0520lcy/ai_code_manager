@@ -36,12 +36,21 @@ interface Issue {
   line?: number;
 }
 
-interface Test {
+export interface Test {
   id: string;
   name: string;
   script: string;
   status: 'not_run' | 'running' | 'passed' | 'failed';
   result: string | null;
+  fileId: string;
+  details?: {
+    coverage?: number;
+    executionTime?: number;
+    assertions?: Array<{
+      name: string;
+      status: 'passed' | 'failed';
+    }>;
+  };
 }
 
 interface GitStatus {
@@ -68,7 +77,7 @@ interface ProjectContextType {
   issues: Issue[];
   
   tests: Test[];
-  runTests: (testId?: string) => void;
+  runTests: (testId?: string, fileIdsParam?: number[]) => void;
   addTest: (test: Test) => void;
   
   gitStatus: GitStatus;
@@ -383,7 +392,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }));
 });`,
       status: 'not_run',
-      result: null
+      result: null,
+      fileId: '3'  // app.js
     }
   ]);
   
@@ -391,41 +401,79 @@ document.addEventListener('DOMContentLoaded', () => {
     setTests(prevTests => [...prevTests, test]);
   };
   
-  const runTests = (testId?: string) => {
-    if (testId) {
-      // Run specific test
-      setTests(prevTests => prevTests.map(test => 
-        test.id === testId ? { ...test, status: 'running', result: null } : test
-      ));
+  const runTests = async (testIdParam?: string, fileIdsParam?: number[]) => {
+    try {
+      let testId: number | undefined = testIdParam ? parseInt(testIdParam) : undefined;
+      let fileIds: number[] = fileIdsParam || 
+        (activeFile.type !== 'folder' ? [parseInt(activeFile.id)] : []);
       
-      // Simulate test execution
-      setTimeout(() => {
+      // Update tests to 'running' state
+      if (testId) {
+        // Mark specific test as running
         setTests(prevTests => prevTests.map(test => 
-          test.id === testId 
-            ? { 
-                ...test, 
-                status: Math.random() > 0.3 ? 'passed' : 'failed',
-                result: Math.random() > 0.3 
-                  ? 'Test passed successfully' 
-                  : 'Expected function to be called with correct arguments'
-              } 
+          test.id === testIdParam ? { ...test, status: 'running', result: null } : test
+        ));
+      } else if (fileIds.length > 0) {
+        // Mark tests for the specified files as running
+        setTests(prevTests => prevTests.map(test => 
+          fileIds.includes(parseInt(test.fileId)) 
+            ? { ...test, status: 'running', result: null } 
             : test
         ));
-      }, 1500);
-    } else {
-      // Run all tests
-      setTests(prevTests => prevTests.map(test => ({ ...test, status: 'running', result: null })));
+      }
       
-      // Simulate test execution for all tests
+      // Create WebSocket message
+      const message = {
+        type: 'runTest',
+        testId,
+        fileIds
+      };
+      
+      // Send message through WebSocket
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const socket = new WebSocket(wsUrl);
+      
+      // Wait for socket to be ready
+      if (socket.readyState !== WebSocket.OPEN) {
+        await new Promise<void>((resolve) => {
+          socket.onopen = () => resolve();
+          // Add timeout to prevent hanging
+          setTimeout(() => resolve(), 3000);
+        });
+      }
+      
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(message));
+        addLog('log', `Test execution requested ${testId ? 'for specific test' : 'for multiple files'}`);
+      } else {
+        throw new Error('WebSocket connection failed');
+      }
+      
+      // Clean up socket after a while
       setTimeout(() => {
-        setTests(prevTests => prevTests.map(test => ({ 
-          ...test, 
-          status: Math.random() > 0.3 ? 'passed' : 'failed',
-          result: Math.random() > 0.3 
-            ? 'Test passed successfully' 
-            : 'Expected function to be called with correct arguments'
-        })));
-      }, 2000);
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.close();
+        }
+      }, 5000);
+    } catch (error: any) {
+      console.error('Error running tests:', error);
+      addLog('error', `Failed to run tests: ${error.message}`);
+      
+      // Reset test status if there's an error
+      if (testIdParam) {
+        setTests(prevTests => prevTests.map(test => 
+          test.id === testIdParam && test.status === 'running' 
+            ? { ...test, status: 'not_run', result: 'Failed to run test' } 
+            : test
+        ));
+      }
+      
+      toast({
+        title: "Test Execution Failed",
+        description: error.message,
+        variant: "destructive",
+      });
     }
   };
   
@@ -639,60 +687,196 @@ document.addEventListener('DOMContentLoaded', () => {
         // Handle different message types from the server
         if (data.type === 'cursorResponse') {
           setCursorStatus('Ready');
-          // Handle cursor response
-          addLog('log', `Received response from Cursor AI: ${JSON.stringify(data.data)}`);
+          
+          // Extract the response data
+          const responseData = data.data;
+          
+          // Log a more user-friendly message
+          addLog('log', `Received response from Cursor AI: ${responseData.response}`);
+          
+          // If suggestions are available, log them
+          if (responseData.suggestions && responseData.suggestions.length > 0) {
+            responseData.suggestions.forEach((suggestion: string) => {
+              addLog('log', `Suggestion: ${suggestion}`);
+            });
+          }
+          
+          // If there's a detailed analysis, log it
+          if (responseData.detailedAnalysis) {
+            addLog('log', `Analysis: ${responseData.detailedAnalysis}`);
+          }
+          
+          // If code snippet is provided, show it in the console
+          if (responseData.codeSnippet) {
+            addLog('log', `Suggested code:\n${responseData.codeSnippet}`);
+          }
+          
+          // Apply file changes if provided
+          if (responseData.fileChanges) {
+            const { fileId, content } = responseData.fileChanges;
+            updateFileContent(fileId.toString(), content);
+            
+            // Update git status to reflect changes
+            setGitStatus(prev => {
+              const fileName = files.find(f => f.id === fileId.toString())?.name || '';
+              if (!fileName) return prev;
+              
+              const isAlreadyModified = prev.modified.includes(fileName);
+              return {
+                ...prev,
+                modified: isAlreadyModified 
+                  ? prev.modified 
+                  : [...prev.modified, fileName]
+              };
+            });
+            
+            toast({
+              title: "Code Updated",
+              description: "Cursor AI has updated your code based on the prompt",
+            });
+          }
         } else if (data.type === 'codeAnalysis') {
           // Handle code analysis results
-          addLog('log', `Code analysis complete: ${data.data.issues.length} issues found`);
+          const issuesCount = data.data.issues ? data.data.issues.length : 0;
+          addLog('log', `Code analysis complete: ${issuesCount} issues found`);
           
           // Update issues
-          if (data.data.issues.length > 0) {
+          if (data.data.issues && data.data.issues.length > 0) {
             const newIssues = data.data.issues.map((issue: any) => ({
               ...issue,
               id: Date.now().toString() + Math.random().toString(36).substr(2, 5)
             }));
             
             setIssues(prevIssues => {
-              const filteredIssues = prevIssues.filter(issue => issue.fileId !== data.data.fileId);
+              const filteredIssues = prevIssues.filter(issue => issue.fileId !== data.data.fileId.toString());
               return [...filteredIssues, ...newIssues];
+            });
+            
+            // Notify user of issues
+            toast({
+              title: "Issues Detected",
+              description: `Found ${issuesCount} issues in your code`,
+              variant: "destructive",
+            });
+          } else {
+            // No issues found - this is good!
+            toast({
+              title: "Code Analysis Complete",
+              description: "No issues detected in your code",
+              variant: "default",
             });
           }
         } else if (data.type === 'testResult') {
           // Handle test results
           addLog('log', `Test execution complete`);
           
-          // Update test status
+          // Update test status with enhanced details
           if (Array.isArray(data.data)) {
             // Multiple tests were run
+            const results = data.data;
+            const passedTests = results.filter((result: any) => result.status === 'passed').length;
+            const totalTests = results.length;
+            
+            // Calculate average coverage
+            const totalCoverage = results.reduce((sum: number, result: any) => 
+              sum + (result.details?.coverage || 0), 0);
+            const avgCoverage = totalTests > 0 ? Math.round(totalCoverage / totalTests) : 0;
+            
+            // Find total execution time
+            const totalExecutionTime = results.reduce((sum: number, result: any) => 
+              sum + (result.details?.executionTime || 0), 0);
+            
+            // Log detailed results
+            addLog('log', `Test Results: ${passedTests}/${totalTests} passed, ${avgCoverage}% coverage, ${totalExecutionTime}ms total execution time`);
+            
+            // For failed tests, log specific failure details
+            results
+              .filter((result: any) => result.status === 'failed')
+              .forEach((result: any) => {
+                addLog('error', `Test #${result.testId} failed: ${result.result}`);
+                
+                // Log failed assertions
+                const failedAssertions = result.details?.assertions?.filter((a: any) => a.status === 'failed') || [];
+                failedAssertions.forEach((assertion: any) => {
+                  addLog('error', `  - ${assertion.name}`);
+                });
+              });
+            
+            // Update tests in state
             setTests(prevTests => 
               prevTests.map(test => {
-                const matchingResult = data.data.find((result: any) => result.testId === parseInt(test.id));
+                const matchingResult = results.find((result: any) => result.testId.toString() === test.id);
                 if (matchingResult) {
                   return {
                     ...test,
                     status: matchingResult.status,
-                    result: matchingResult.result
+                    result: matchingResult.result,
+                    // Store additional details in the test object
+                    details: matchingResult.details
                   };
                 }
                 return test;
               })
             );
+            
+            // Notify user of test results
+            toast({
+              title: "Tests Completed",
+              description: `${passedTests} of ${totalTests} tests passed with ${avgCoverage}% coverage`,
+              variant: passedTests === totalTests ? "default" : "destructive",
+            });
           } else {
             // Single test was run
+            const testResult = data.data;
+            const isPassed = testResult.status === 'passed';
+            const coverage = testResult.details?.coverage || 0;
+            const executionTime = testResult.details?.executionTime || 0;
+            
+            // Log detailed result
+            addLog('log', `Test #${testResult.testId} ${isPassed ? 'passed' : 'failed'}: ${coverage}% coverage, ${executionTime}ms execution time`);
+            
+            // If test failed, log assertion details
+            if (!isPassed && testResult.details?.assertions) {
+              const failedAssertions = testResult.details.assertions.filter((a: any) => a.status === 'failed');
+              failedAssertions.forEach((assertion: any) => {
+                addLog('error', `  - ${assertion.name} failed`);
+              });
+            }
+            
+            // Update test in state
             setTests(prevTests => 
               prevTests.map(test => 
-                test.id === data.data.testId.toString() 
-                  ? { ...test, status: data.data.status, result: data.data.result }
+                test.id === testResult.testId.toString() 
+                  ? { 
+                      ...test, 
+                      status: testResult.status, 
+                      result: testResult.result,
+                      details: testResult.details
+                    }
                   : test
               )
             );
+            
+            // Notify user of test result
+            toast({
+              title: isPassed ? "Test Passed" : "Test Failed",
+              description: `${testResult.result} (${coverage}% coverage)`,
+              variant: isPassed ? "default" : "destructive",
+            });
           }
         } else if (data.type === 'error') {
           // Handle errors
           addLog('error', `Server error: ${data.message}`);
+          
+          toast({
+            title: "Error",
+            description: data.message,
+            variant: "destructive",
+          });
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error parsing WebSocket message:', error);
+        addLog('error', `Error processing server message: ${error.message}`);
       }
     };
     

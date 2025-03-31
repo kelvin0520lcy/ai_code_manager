@@ -2,7 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { WebSocketServer, WebSocket } from 'ws';
-import { insertUserSchema, insertProjectSchema, insertFileSchema, insertLogSchema, insertIssueSchema, insertTestSchema, insertGitOperationSchema } from "@shared/schema";
+import { 
+  insertUserSchema, insertProjectSchema, insertFileSchema, 
+  insertLogSchema, insertIssueSchema, insertTestSchema, 
+  insertGitOperationSchema, InsertFile 
+} from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -230,25 +234,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Helper functions for processing WebSocket requests
   async function processCursorPrompt(prompt: string, fileId: number) {
+    // Get the file to understand its context
+    const file = await storage.getFile(fileId);
+    if (!file) {
+      throw new Error('File not found');
+    }
+    
     // In a real implementation, this would interact with the Cursor AI API
-    // For now, return a simple response
-    return {
+    // Here we're creating a more detailed and context-aware mock implementation
+    
+    // Analyze prompt for different types of requests
+    const promptLower = prompt.toLowerCase();
+    
+    // Generate different responses based on prompt content
+    let response = {
       prompt,
       response: "Processed prompt successfully",
-      suggestions: [
-        "Consider adding error handling",
-        "Implement form validation"
-      ]
+      suggestions: [] as string[],
+      codeSnippet: "",
+      detailedAnalysis: "",
+      fileChanges: null as any
     };
+    
+    // Handle different types of prompts
+    if (promptLower.includes('implement') || promptLower.includes('create') || promptLower.includes('add')) {
+      // Implementation request
+      response.response = "Implementation suggestion created";
+      
+      // Generate relevant code based on file type
+      if (file.type === 'js' || file.type === 'ts') {
+        response.suggestions = [
+          "Add try/catch blocks for error handling",
+          "Consider adding parameter validation",
+          "Implement proper return types"
+        ];
+        
+        if (promptLower.includes('api') || promptLower.includes('fetch')) {
+          response.codeSnippet = `async function fetchData(url) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(\`HTTP error! status: \${response.status}\`);
+    }
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Fetch error:', error);
+    throw error;
+  }
+}`;
+        } else if (promptLower.includes('form') || promptLower.includes('submit')) {
+          response.codeSnippet = `function submitForm(data) {
+  // Form validation
+  if (!data.email || !data.name) {
+    throw new Error('Email and name are required');
+  }
+  
+  // API submission
+  return fetch('https://api.example.com/submit', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  })
+  .then(response => {
+    if (!response.ok) {
+      throw new Error('Form submission failed');
+    }
+    return response.json();
+  })
+  .then(result => {
+    console.log('Success:', result);
+    return result;
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    throw error;
+  });
+}`;
+        }
+        
+        // Mock file changes
+        // Only modify the file if it's the active file and has "Implementation missing" or "TODO" comments
+        const fileContent = file.content || '';
+        if (fileContent.includes('// Implementation missing') || fileContent.includes('// TODO')) {
+          let updatedContent = fileContent;
+          
+          // Replace the placeholder in the active file
+          if (promptLower.includes('submitform')) {
+            updatedContent = fileContent.replace(
+              /function\s+submitForm\s*\([^)]*\)\s*\{[^}]*\}/,
+              response.codeSnippet
+            );
+          }
+          
+          response.fileChanges = {
+            fileId,
+            content: updatedContent
+          };
+        }
+      }
+    } else if (promptLower.includes('optimize') || promptLower.includes('improve')) {
+      // Optimization request
+      response.response = "Optimization suggestions provided";
+      response.suggestions = [
+        "Consider using memoization to prevent redundant calculations",
+        "Replace inefficient loops with array methods",
+        "Implement proper error boundaries"
+      ];
+      response.detailedAnalysis = "Performance bottlenecks detected in loop operations and error handling patterns. Recommended refactoring to use functional programming approaches and proper error management.";
+    } else if (promptLower.includes('debug') || promptLower.includes('fix')) {
+      // Debugging request
+      response.response = "Debug analysis complete";
+      response.suggestions = [
+        "Check for null/undefined values before accessing properties",
+        "Validate input parameters",
+        "Add proper error handling for edge cases"
+      ];
+      response.detailedAnalysis = "Potential issues include missing null checks, insufficient input validation, and incomplete error handling patterns.";
+    } else if (promptLower.includes('explain')) {
+      // Code explanation request
+      response.response = "Code explanation generated";
+      response.detailedAnalysis = "This code implements a form submission workflow with client-side validation before sending data to a server. It includes error handling for both validation and server response issues.";
+    }
+    
+    // Return the enhanced response
+    return response;
   }
   
   async function processCodeUpdate(fileId: number, content: string) {
-    // Update the file content
-    await storage.updateFile(fileId, { content });
+    // Update the file content with type-safe content parameter
+    const contentUpdate: Partial<InsertFile> = { content };
+    await storage.updateFile(fileId, contentUpdate as any);
     
     // Analyze code for issues
     // This would be more sophisticated in a real implementation
-    const issues = [];
+    const issues: Array<{
+      title: string;
+      description: string;
+      severity: string;
+      fileId: number;
+    }> = [];
     
     if (content.includes('// TODO') || content.includes('// Implementation missing')) {
       issues.push({
@@ -276,48 +403,283 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   async function runTest(testId: number | undefined, fileIds: number[]) {
     if (testId) {
+      // Run a specific test
       const test = await storage.getTest(testId);
       
       if (!test) {
         throw new Error('Test not found');
       }
       
-      // Simulate test execution
-      const passed = Math.random() > 0.3;
-      const result = passed ? 'Test passed successfully' : 'Expected function to be called with correct arguments';
+      // Get the file being tested
+      const file = await storage.getFile(test.fileId);
+      if (!file) {
+        throw new Error('Test target file not found');
+      }
       
+      // More sophisticated test execution simulation that considers the content of the file
+      const fileContent = file.content || '';
+      const testScript = test.script || '';
+      
+      // Analyze the test and file to determine if it should pass
+      let passed = false;
+      let result = '';
+      let coverage = 0;
+      let executionTime = 0;
+      let assertionResults = [] as any[];
+      
+      // Parse the test script to extract what's being tested
+      const isFormTest = testScript.includes('form') || testScript.includes('submit');
+      const isApiTest = testScript.includes('api') || testScript.includes('fetch');
+      const isValidationTest = testScript.includes('valid') || testScript.includes('validation');
+      
+      // Check if the file has implementations for what's being tested
+      if (isFormTest && fileContent.includes('function submitForm')) {
+        // Form testing - check if validation and API call are implemented
+        passed = fileContent.includes('validation') || fileContent.includes('if (!data.email');
+        if (passed) {
+          result = 'Test passed successfully';
+          coverage = Math.floor(Math.random() * 30) + 70; // 70-100% coverage
+          executionTime = Math.floor(Math.random() * 50) + 50; // 50-100ms
+          
+          assertionResults = [
+            { name: 'Should validate email', status: 'passed' },
+            { name: 'Should validate name', status: 'passed' },
+            { name: 'Should call API with correct data', status: 'passed' }
+          ];
+        } else {
+          result = 'Expected form validation to be implemented';
+          coverage = Math.floor(Math.random() * 40) + 30; // 30-70% coverage
+          executionTime = Math.floor(Math.random() * 40) + 20; // 20-60ms
+          
+          assertionResults = [
+            { name: 'Should validate email', status: fileContent.includes('email') ? 'passed' : 'failed' },
+            { name: 'Should validate name', status: fileContent.includes('name') ? 'passed' : 'failed' },
+            { name: 'Should call API with correct data', status: fileContent.includes('fetch') ? 'passed' : 'failed' }
+          ];
+        }
+      } else if (isApiTest && fileContent.includes('fetch(')) {
+        // API testing - check if error handling is implemented
+        passed = fileContent.includes('try') && fileContent.includes('catch');
+        if (passed) {
+          result = 'API fetch test passed successfully';
+          coverage = Math.floor(Math.random() * 20) + 80; // 80-100% coverage
+          executionTime = Math.floor(Math.random() * 60) + 40; // 40-100ms
+          
+          assertionResults = [
+            { name: 'Should make HTTP request', status: 'passed' },
+            { name: 'Should handle network errors', status: 'passed' },
+            { name: 'Should parse response correctly', status: 'passed' }
+          ];
+        } else {
+          result = 'Expected error handling for API calls';
+          coverage = Math.floor(Math.random() * 30) + 40; // 40-70% coverage
+          executionTime = Math.floor(Math.random() * 30) + 20; // 20-50ms
+          
+          assertionResults = [
+            { name: 'Should make HTTP request', status: 'passed' },
+            { name: 'Should handle network errors', status: fileContent.includes('catch') ? 'passed' : 'failed' },
+            { name: 'Should parse response correctly', status: fileContent.includes('json') ? 'passed' : 'failed' }
+          ];
+        }
+      } else if (isValidationTest) {
+        // Validation testing
+        passed = fileContent.includes('valid') || (fileContent.includes('if') && (fileContent.includes('!') || fileContent.includes('==') || fileContent.includes('==='))); 
+        if (passed) {
+          result = 'Validation test passed successfully';
+          coverage = Math.floor(Math.random() * 20) + 80; // 80-100% coverage
+          executionTime = Math.floor(Math.random() * 30) + 10; // 10-40ms
+          
+          assertionResults = [
+            { name: 'Should validate input', status: 'passed' },
+            { name: 'Should reject invalid input', status: 'passed' },
+            { name: 'Should accept valid input', status: 'passed' }
+          ];
+        } else {
+          result = 'Expected validation logic to be implemented';
+          coverage = Math.floor(Math.random() * 20) + 30; // 30-50% coverage
+          executionTime = Math.floor(Math.random() * 20) + 10; // 10-30ms
+          
+          assertionResults = [
+            { name: 'Should validate input', status: 'failed' },
+            { name: 'Should reject invalid input', status: 'failed' },
+            { name: 'Should accept valid input', status: fileContent.includes('return') ? 'passed' : 'failed' }
+          ];
+        }
+      } else {
+        // Generic test with random result if no specific patterns are detected
+        passed = Math.random() > 0.3;
+        result = passed ? 'Test passed successfully' : 'Expected conditions not met in implementation';
+        coverage = Math.floor(Math.random() * 70) + 30; // 30-100% coverage
+        executionTime = Math.floor(Math.random() * 90) + 10; // 10-100ms
+        
+        assertionResults = [
+          { name: 'Should execute without errors', status: passed ? 'passed' : 'failed' },
+          { name: 'Should return expected output', status: passed ? 'passed' : 'failed' }
+        ];
+      }
+      
+      // Update test status in storage
       await storage.updateTest(testId, {
         status: passed ? 'passed' : 'failed',
         result
       });
       
+      // Return detailed test results
       return {
         testId,
         status: passed ? 'passed' : 'failed',
-        result
+        result,
+        details: {
+          coverage,
+          executionTime,
+          assertions: assertionResults
+        }
       };
     } else {
       // Run all tests for the given files
-      const testsToRun = await Promise.all(fileIds.map(fileId => 
+      const testsPromises: Promise<any[]>[] = fileIds.map((fileId: number) => 
         storage.getTestsByFileId(fileId)
-      ));
+      );
+      const testsToRun = await Promise.all(testsPromises);
       
-      const flattenedTests = testsToRun.flat();
+      const flattenedTests: any[] = testsToRun.flat();
       
-      // Simulate test execution for all tests
+      if (flattenedTests.length === 0) {
+        return [];
+      }
+      
+      // Get all the files being tested
+      const uniqueFileIds: number[] = Array.from(new Set(flattenedTests.map((test: any) => test.fileId)));
+      const fileDetailsPromises = uniqueFileIds.map((fileId: number) => storage.getFile(fileId));
+      const fileDetails = await Promise.all(fileDetailsPromises);
+      
+      // Create a map for quick file content lookup
+      const fileContentMap = new Map();
+      fileDetails.forEach(file => {
+        if (file) {
+          fileContentMap.set(file.id, file.content || '');
+        }
+      });
+      
+      // Simulate test execution for all tests with more sophisticated analysis
       const results = await Promise.all(flattenedTests.map(async test => {
-        const passed = Math.random() > 0.3;
-        const result = passed ? 'Test passed successfully' : 'Expected function to be called with correct arguments';
+        const fileContent = fileContentMap.get(test.fileId) || '';
+        const testScript = test.script || '';
         
+        // Analyze the test and file to determine if it should pass
+        let passed = false;
+        let result = '';
+        let coverage = 0;
+        let executionTime = 0;
+        let assertionResults = [] as any[];
+        
+        // Parse the test script to extract what's being tested
+        const isFormTest = testScript.includes('form') || testScript.includes('submit');
+        const isApiTest = testScript.includes('api') || testScript.includes('fetch');
+        const isValidationTest = testScript.includes('valid') || testScript.includes('validation');
+        
+        // Check if the file has implementations for what's being tested
+        if (isFormTest && fileContent.includes('function submitForm')) {
+          // Form testing - check if validation and API call are implemented
+          passed = fileContent.includes('validation') || fileContent.includes('if (!data.email');
+          if (passed) {
+            result = 'Test passed successfully';
+            coverage = Math.floor(Math.random() * 30) + 70; // 70-100% coverage
+            executionTime = Math.floor(Math.random() * 50) + 50; // 50-100ms
+            
+            assertionResults = [
+              { name: 'Should validate email', status: 'passed' },
+              { name: 'Should validate name', status: 'passed' },
+              { name: 'Should call API with correct data', status: 'passed' }
+            ];
+          } else {
+            result = 'Expected form validation to be implemented';
+            coverage = Math.floor(Math.random() * 40) + 30; // 30-70% coverage
+            executionTime = Math.floor(Math.random() * 40) + 20; // 20-60ms
+            
+            assertionResults = [
+              { name: 'Should validate email', status: fileContent.includes('email') ? 'passed' : 'failed' },
+              { name: 'Should validate name', status: fileContent.includes('name') ? 'passed' : 'failed' },
+              { name: 'Should call API with correct data', status: fileContent.includes('fetch') ? 'passed' : 'failed' }
+            ];
+          }
+        } else if (isApiTest && fileContent.includes('fetch(')) {
+          // API testing - check if error handling is implemented
+          passed = fileContent.includes('try') && fileContent.includes('catch');
+          if (passed) {
+            result = 'API fetch test passed successfully';
+            coverage = Math.floor(Math.random() * 20) + 80; // 80-100% coverage
+            executionTime = Math.floor(Math.random() * 60) + 40; // 40-100ms
+            
+            assertionResults = [
+              { name: 'Should make HTTP request', status: 'passed' },
+              { name: 'Should handle network errors', status: 'passed' },
+              { name: 'Should parse response correctly', status: 'passed' }
+            ];
+          } else {
+            result = 'Expected error handling for API calls';
+            coverage = Math.floor(Math.random() * 30) + 40; // 40-70% coverage
+            executionTime = Math.floor(Math.random() * 30) + 20; // 20-50ms
+            
+            assertionResults = [
+              { name: 'Should make HTTP request', status: 'passed' },
+              { name: 'Should handle network errors', status: fileContent.includes('catch') ? 'passed' : 'failed' },
+              { name: 'Should parse response correctly', status: fileContent.includes('json') ? 'passed' : 'failed' }
+            ];
+          }
+        } else if (isValidationTest) {
+          // Validation testing
+          passed = fileContent.includes('valid') || (fileContent.includes('if') && (fileContent.includes('!') || fileContent.includes('==') || fileContent.includes('==='))); 
+          if (passed) {
+            result = 'Validation test passed successfully';
+            coverage = Math.floor(Math.random() * 20) + 80; // 80-100% coverage
+            executionTime = Math.floor(Math.random() * 30) + 10; // 10-40ms
+            
+            assertionResults = [
+              { name: 'Should validate input', status: 'passed' },
+              { name: 'Should reject invalid input', status: 'passed' },
+              { name: 'Should accept valid input', status: 'passed' }
+            ];
+          } else {
+            result = 'Expected validation logic to be implemented';
+            coverage = Math.floor(Math.random() * 20) + 30; // 30-50% coverage
+            executionTime = Math.floor(Math.random() * 20) + 10; // 10-30ms
+            
+            assertionResults = [
+              { name: 'Should validate input', status: 'failed' },
+              { name: 'Should reject invalid input', status: 'failed' },
+              { name: 'Should accept valid input', status: fileContent.includes('return') ? 'passed' : 'failed' }
+            ];
+          }
+        } else {
+          // Generic test with random result if no specific patterns are detected
+          passed = Math.random() > 0.3;
+          result = passed ? 'Test passed successfully' : 'Expected conditions not met in implementation';
+          coverage = Math.floor(Math.random() * 70) + 30; // 30-100% coverage
+          executionTime = Math.floor(Math.random() * 90) + 10; // 10-100ms
+          
+          assertionResults = [
+            { name: 'Should execute without errors', status: passed ? 'passed' : 'failed' },
+            { name: 'Should return expected output', status: passed ? 'passed' : 'failed' }
+          ];
+        }
+        
+        // Update test status in storage
         await storage.updateTest(test.id, {
           status: passed ? 'passed' : 'failed',
           result
         });
         
+        // Return detailed test results
         return {
           testId: test.id,
           status: passed ? 'passed' : 'failed',
-          result
+          result,
+          details: {
+            coverage,
+            executionTime,
+            assertions: assertionResults
+          }
         };
       }));
       

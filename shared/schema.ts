@@ -30,7 +30,7 @@ export const files = pgTable("files", {
   type: text("type").notNull(), // 'file' or 'folder'
   content: text("content"),
   projectId: integer("project_id").references(() => projects.id).notNull(),
-  parentId: integer("parent_id").references(() => files.id),
+  parentId: integer("parent_id"), // Self-reference to parent folder
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -67,6 +67,7 @@ export const tests = pgTable("tests", {
   status: text("status").default("not_run").notNull(), // 'not_run', 'running', 'passed', 'failed'
   result: text("result"),
   projectId: integer("project_id").references(() => projects.id).notNull(),
+  fileId: integer("file_id").references(() => files.id).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
