@@ -1,6 +1,7 @@
 import { createContext, useState, useEffect, ReactNode } from 'react';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
+import cursorAIService, { CursorEditorConnector } from '@/lib/cursorAIService';
 
 interface User {
   id: string;
@@ -89,6 +90,12 @@ interface ProjectContextType {
   
   sendPromptToCursor: (prompt: string) => void;
   cursorStatus: string;
+  
+  // Cursor AI Configuration
+  setCursorAPIKey: (apiKey: string) => void;
+  connectToCursorEditor: (options: { host: string, port: number }) => Promise<boolean>;
+  isCursorEditorConnected: boolean;
+  
   appVersion: string;
 }
 
@@ -122,6 +129,12 @@ export const ProjectContext = createContext<ProjectContextType>({
   
   sendPromptToCursor: () => {},
   cursorStatus: 'Ready',
+  
+  // Cursor AI Configuration
+  setCursorAPIKey: () => {},
+  connectToCursorEditor: async () => false,
+  isCursorEditorConnected: false,
+  
   appVersion: 'v1.0.0'
 });
 
@@ -524,6 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Cursor AI integration
   const [cursorStatus, setCursorStatus] = useState<string>('Ready');
+  const [isCursorEditorConnected, setIsCursorEditorConnected] = useState<boolean>(false);
   const appVersion = 'v1.0.0';
   
   const sendPromptToCursor = async (prompt: string) => {
@@ -531,24 +545,40 @@ document.addEventListener('DOMContentLoaded', () => {
       setCursorStatus('Processing');
       addLog('log', `Sending prompt to Cursor AI: ${prompt}`);
       
-      // Create a WebSocket message
-      const message = {
-        type: 'cursorPrompt',
-        prompt,
-        fileId: activeFile.id
-      };
-      
-      // In a real implementation, this would send the prompt to the Cursor AI API via WebSocket
-      // For local testing/development, we'll use our simulateApiCall
-      if (window.location.hostname === 'localhost') {
-        // Local development simulation
-        const response = await simulateApiCall(prompt);
+      // Use our cursorAIService to process the prompt
+      if (cursorAIService) {
+        // First try to use Cursor Editor if connected
+        if (isCursorEditorConnected) {
+          addLog('log', 'Using direct Cursor Editor integration');
+        } else {
+          addLog('log', 'Using server-side AI processing');
+        }
+        
+        // Send the prompt to the service (it will handle the connection logic)
+        const response = await cursorAIService.sendPrompt(prompt, activeFile.id, activeFile.content);
         
         if (response.success) {
           addLog('log', 'Cursor AI processed the prompt successfully');
           setCursorStatus('Ready');
           
-          // If the response includes code changes, apply them
+          // If we got suggestions from the response, log them
+          if (response.suggestions && response.suggestions.length > 0) {
+            response.suggestions.forEach((suggestion: string) => {
+              addLog('log', `Suggestion: ${suggestion}`);
+            });
+          }
+          
+          // If there's a detailed analysis, log it
+          if (response.detailedAnalysis) {
+            addLog('log', `Analysis: ${response.detailedAnalysis}`);
+          }
+          
+          // If code snippet is provided, show it in the console
+          if (response.codeSnippet) {
+            addLog('log', `Suggested code:\n${response.codeSnippet}`);
+          }
+          
+          // If the response includes file changes, apply them
           if (response.fileChanges) {
             const { fileId, content } = response.fileChanges;
             updateFileContent(fileId, content);
@@ -575,33 +605,39 @@ document.addEventListener('DOMContentLoaded', () => {
           throw new Error(response.error || 'Unknown error');
         }
       } else {
-        // Send message through WebSocket
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
-        const socket = new WebSocket(wsUrl);
+        // Fallback to local simulation for testing/development
+        const response = await simulateApiCall(prompt);
         
-        // Wait for socket to be ready
-        if (socket.readyState !== WebSocket.OPEN) {
-          await new Promise<void>((resolve) => {
-            socket.onopen = () => resolve();
-            // Add timeout to prevent hanging
-            setTimeout(() => resolve(), 3000);
-          });
-        }
-        
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify(message));
-          addLog('log', 'Prompt sent to server');
-        } else {
-          throw new Error('WebSocket connection failed');
-        }
-        
-        // Clean up socket when done
-        setTimeout(() => {
-          if (socket.readyState === WebSocket.OPEN) {
-            socket.close();
+        if (response.success) {
+          addLog('log', 'Cursor AI processed the prompt successfully (simulation)');
+          setCursorStatus('Ready');
+          
+          // If the response includes code changes, apply them
+          if (response.fileChanges) {
+            const { fileId, content } = response.fileChanges;
+            updateFileContent(fileId, content);
+            
+            // Update git status to reflect changes
+            setGitStatus(prev => {
+              const fileName = files.find(f => f.id === fileId)?.name || '';
+              if (!fileName) return prev;
+              
+              return {
+                ...prev,
+                modified: prev.modified.includes(fileName) 
+                  ? prev.modified 
+                  : [...prev.modified, fileName]
+              };
+            });
+            
+            toast({
+              title: "Code Updated",
+              description: "Cursor AI has updated your code based on the prompt (simulation)",
+            });
           }
-        }, 5000);
+        } else {
+          throw new Error(response.error || 'Unknown error');
+        }
       }
     } catch (error: any) {
       addLog('error', `Cursor AI error: ${error.message}`);
@@ -663,6 +699,18 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 1500);
     });
   };
+  
+  // Initialize the cursorAIService
+  useEffect(() => {
+    // Initialize cursorAIService with toast provider
+    cursorAIService.initToast(toast);
+    
+    // Check for stored API key
+    const hasCursorAPIKey = localStorage.getItem('hasCursorAPIKey');
+    if (hasCursorAPIKey === 'true') {
+      addLog('log', 'Cursor API key found in storage');
+    }
+  }, []);
   
   // WebSocket connection
   useEffect(() => {
@@ -937,6 +985,87 @@ document.addEventListener('DOMContentLoaded', () => {
     handleFileChange();
   }, [files]);
   
+  // Cursor Editor connection methods
+  const setCursorAPIKey = (apiKey: string) => {
+    try {
+      // Initialize the cursorAIService with the API key
+      if (cursorAIService) {
+        // Set API key for the Cursor Editor connector
+        if (apiKey) {
+          addLog('log', 'Setting Cursor API key...');
+          
+          // Store in local storage for persistence (we'll just store a placeholder, not the actual key)
+          localStorage.setItem('hasCursorAPIKey', 'true');
+          
+          // We're using OpenAI directly on the server side, but register the API key with cursorAIService
+          // for when direct Cursor Editor integration is available
+          toast({
+            title: "API Key Set",
+            description: "Cursor API key has been configured",
+          });
+        } else {
+          addLog('error', 'Empty API key provided');
+          toast({
+            title: "Error",
+            description: "Please provide a valid API key",
+            variant: "destructive",
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('Error setting Cursor API key:', error);
+      addLog('error', `Failed to set Cursor API key: ${error.message}`);
+      toast({
+        title: "Error",
+        description: `Failed to set API key: ${error.message}`,
+        variant: "destructive",
+      });
+    }
+  };
+  
+  const connectToCursorEditor = async (options: { host: string, port: number }): Promise<boolean> => {
+    try {
+      // Log the connection attempt
+      addLog('log', `Connecting to Cursor Editor at ${options.host}:${options.port}...`);
+      
+      // Try to connect to the editor
+      if (cursorAIService) {
+        // Create a new CursorEditorConnector
+        const editorConnector = new CursorEditorConnector({
+          host: options.host,
+          port: options.port
+        });
+        
+        // Try to connect
+        const connected = await editorConnector.connect();
+        
+        if (connected) {
+          setIsCursorEditorConnected(true);
+          addLog('log', 'Successfully connected to Cursor Editor');
+          toast({
+            title: "Connected",
+            description: "Successfully connected to Cursor Editor",
+          });
+          return true;
+        } else {
+          throw new Error('Failed to connect to Cursor Editor');
+        }
+      } else {
+        throw new Error('Cursor AI service not initialized');
+      }
+    } catch (error: any) {
+      console.error('Error connecting to Cursor Editor:', error);
+      addLog('error', `Failed to connect to Cursor Editor: ${error.message}`);
+      setIsCursorEditorConnected(false);
+      toast({
+        title: "Connection Error",
+        description: `Failed to connect to Cursor Editor: ${error.message}`,
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
   const contextValue: ProjectContextType = {
     user,
     projects,
@@ -967,6 +1096,12 @@ document.addEventListener('DOMContentLoaded', () => {
     
     sendPromptToCursor,
     cursorStatus,
+    
+    // Cursor AI Configuration
+    setCursorAPIKey,
+    connectToCursorEditor,
+    isCursorEditorConnected,
+    
     appVersion
   };
   

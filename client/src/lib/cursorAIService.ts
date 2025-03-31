@@ -27,6 +27,22 @@ export interface CursorPromptHistoryItem {
   };
 }
 
+// Interface for Cursor API interaction
+export interface CursorAPIOptions {
+  apiKey?: string;         // Cursor API Key
+  endpoint?: string;       // API endpoint
+  model?: string;          // AI model to use 
+  includeMetadata?: boolean; // Whether to include file metadata
+}
+
+// Interface for Cursor Editor Communication
+export interface CursorEditorOptions {
+  host?: string;           // Editor host address
+  port?: number;           // Editor port number
+  secure?: boolean;        // Whether to use secure connection
+  timeout?: number;        // Connection timeout in ms
+}
+
 // AI Manager learning patterns - stores successful prompt patterns
 class AILearningEngine {
   private promptPatterns: Map<string, number> = new Map(); // pattern -> success count
@@ -187,6 +203,299 @@ class AILearningEngine {
   }
 }
 
+// Class that handles direct integration with Cursor Editor
+export class CursorEditorConnector {
+  private editorConnection: WebSocket | null = null;
+  private connected: boolean = false;
+  private connecting: boolean = false;
+  private messageQueue: any[] = [];
+  private messageHandlers: Map<string, (data: any) => void> = new Map();
+  private options: CursorEditorOptions;
+  private apiKey: string | null = null;
+
+  constructor(options: CursorEditorOptions = {}) {
+    this.options = {
+      host: options.host || 'localhost',
+      port: options.port || 9999, // Default Cursor Editor port
+      secure: options.secure || false,
+      timeout: options.timeout || 5000
+    };
+  }
+
+  // Set API key for Cursor API
+  setApiKey(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+
+  // Connect to Cursor Editor
+  async connect(): Promise<boolean> {
+    if (this.connected && this.editorConnection && this.editorConnection.readyState === WebSocket.OPEN) {
+      return true;
+    }
+
+    if (this.connecting) {
+      return new Promise<boolean>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (this.connected) {
+            clearInterval(checkInterval);
+            resolve(true);
+          }
+        }, 100);
+
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve(false);
+        }, this.options.timeout || 5000);
+      });
+    }
+
+    try {
+      this.connecting = true;
+      const protocol = this.options.secure ? 'wss' : 'ws';
+      const url = `${protocol}://${this.options.host}:${this.options.port}/editor`;
+      
+      console.log(`Connecting to Cursor Editor at ${url}`);
+      this.editorConnection = new WebSocket(url);
+      
+      return new Promise<boolean>((resolve) => {
+        if (!this.editorConnection) {
+          this.connecting = false;
+          resolve(false);
+          return;
+        }
+        
+        this.editorConnection.onopen = () => {
+          console.log('Connected to Cursor Editor');
+          this.connected = true;
+          this.connecting = false;
+          
+          // Process message queue
+          while (this.messageQueue.length > 0) {
+            const message = this.messageQueue.shift();
+            if (message) this.sendToEditor(message);
+          }
+          
+          // Authenticate if we have an API key
+          if (this.apiKey) {
+            this.sendToEditor({
+              type: 'authenticate',
+              apiKey: this.apiKey
+            });
+          }
+          
+          resolve(true);
+        };
+        
+        this.editorConnection.onclose = () => {
+          console.log('Disconnected from Cursor Editor');
+          this.connected = false;
+          this.connecting = false;
+          this.editorConnection = null;
+        };
+        
+        this.editorConnection.onerror = (error) => {
+          console.error('Cursor Editor connection error:', error);
+          this.connecting = false;
+          resolve(false);
+        };
+        
+        this.editorConnection.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            this.handleEditorMessage(message);
+          } catch (error) {
+            console.error('Error parsing message from Cursor Editor:', error);
+          }
+        };
+        
+        setTimeout(() => {
+          if (this.connecting) {
+            this.connecting = false;
+            resolve(false);
+          }
+        }, this.options.timeout || 5000);
+      });
+    } catch (error) {
+      console.error('Error connecting to Cursor Editor:', error);
+      this.connecting = false;
+      return false;
+    }
+  }
+  
+  // Send a message to the Cursor Editor
+  sendToEditor(message: any): boolean {
+    if (this.connected && this.editorConnection && this.editorConnection.readyState === WebSocket.OPEN) {
+      this.editorConnection.send(JSON.stringify(message));
+      return true;
+    } else {
+      // Queue the message for when we're connected
+      this.messageQueue.push(message);
+      return false;
+    }
+  }
+  
+  // Handle messages from the Cursor Editor
+  private handleEditorMessage(message: any) {
+    const { type, id } = message;
+    
+    // Check if we have a handler registered for this message ID
+    if (id && this.messageHandlers.has(id)) {
+      const handler = this.messageHandlers.get(id);
+      if (handler) {
+        handler(message);
+        this.messageHandlers.delete(id);
+      }
+    }
+    
+    // Also handle message types
+    switch (type) {
+      case 'authenticated':
+        console.log('Successfully authenticated with Cursor Editor');
+        break;
+      case 'error':
+        console.error('Cursor Editor error:', message.error);
+        break;
+    }
+  }
+  
+  // Send a prompt to Cursor AI via the editor
+  async sendPrompt(prompt: string, filePath: string): Promise<any> {
+    const messageId = Date.now().toString();
+    
+    if (!await this.connect()) {
+      throw new Error('Failed to connect to Cursor Editor');
+    }
+    
+    const message = {
+      id: messageId,
+      type: 'prompt',
+      prompt,
+      filePath
+    };
+    
+    this.sendToEditor(message);
+    
+    // Wait for response
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.messageHandlers.delete(messageId);
+        reject(new Error('Timeout waiting for Cursor Editor response'));
+      }, this.options.timeout || 30000);
+      
+      this.messageHandlers.set(messageId, (response) => {
+        clearTimeout(timeoutId);
+        if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }
+  
+  // Get open files in Cursor Editor
+  async getOpenFiles(): Promise<string[]> {
+    const messageId = Date.now().toString();
+    
+    if (!await this.connect()) {
+      throw new Error('Failed to connect to Cursor Editor');
+    }
+    
+    const message = {
+      id: messageId,
+      type: 'getOpenFiles'
+    };
+    
+    this.sendToEditor(message);
+    
+    // Wait for response
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.messageHandlers.delete(messageId);
+        reject(new Error('Timeout waiting for Cursor Editor response'));
+      }, this.options.timeout || 5000);
+      
+      this.messageHandlers.set(messageId, (response) => {
+        clearTimeout(timeoutId);
+        if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve(response.files || []);
+        }
+      });
+    });
+  }
+  
+  // Get content of a file in Cursor Editor
+  async getFileContent(filePath: string): Promise<string> {
+    const messageId = Date.now().toString();
+    
+    if (!await this.connect()) {
+      throw new Error('Failed to connect to Cursor Editor');
+    }
+    
+    const message = {
+      id: messageId,
+      type: 'getFileContent',
+      filePath
+    };
+    
+    this.sendToEditor(message);
+    
+    // Wait for response
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.messageHandlers.delete(messageId);
+        reject(new Error('Timeout waiting for Cursor Editor response'));
+      }, this.options.timeout || 5000);
+      
+      this.messageHandlers.set(messageId, (response) => {
+        clearTimeout(timeoutId);
+        if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve(response.content || '');
+        }
+      });
+    });
+  }
+  
+  // Apply changes to a file in Cursor Editor
+  async applyChanges(filePath: string, changes: {range: {start: {line: number, character: number}, end: {line: number, character: number}}, newText: string}[]): Promise<boolean> {
+    const messageId = Date.now().toString();
+    
+    if (!await this.connect()) {
+      throw new Error('Failed to connect to Cursor Editor');
+    }
+    
+    const message = {
+      id: messageId,
+      type: 'applyChanges',
+      filePath,
+      changes
+    };
+    
+    this.sendToEditor(message);
+    
+    // Wait for response
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.messageHandlers.delete(messageId);
+        reject(new Error('Timeout waiting for Cursor Editor response'));
+      }, this.options.timeout || 5000);
+      
+      this.messageHandlers.set(messageId, (response) => {
+        clearTimeout(timeoutId);
+        if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve(response.success || false);
+        }
+      });
+    });
+  }
+}
+
 // Class for managing Cursor AI integration
 export class CursorAIService {
   private wsConnection: WebSocket | null = null;
@@ -194,10 +503,30 @@ export class CursorAIService {
   private connecting: boolean = false;
   private messageQueue: any[] = [];
   private toast: { toast: (args: any) => void };
+  private cursorEditor: CursorEditorConnector | null = null;
 
   constructor() {
     this.learningEngine = new AILearningEngine();
     this.toast = { toast: () => {} }; // Default empty toast function
+    
+    // Initialize Cursor Editor connector if running in a dev environment
+    if (import.meta.env.DEV) {
+      this.initCursorEditor();
+    }
+  }
+  
+  // Initialize Cursor Editor connector
+  private initCursorEditor() {
+    this.cursorEditor = new CursorEditorConnector({
+      host: 'localhost',
+      port: 9999
+    });
+    
+    // Check for API key in environment
+    const apiKey = import.meta.env.VITE_CURSOR_API_KEY;
+    if (apiKey) {
+      this.cursorEditor.setApiKey(apiKey);
+    }
   }
 
   // Initialize with toast provider
@@ -318,8 +647,63 @@ export class CursorAIService {
   // Send prompt to Cursor AI
   async sendPrompt(prompt: string, fileId: string, fileContent: string): Promise<CursorAIResponse> {
     try {
-      // Record the prompt
+      // Record the prompt for learning and history
       this.learningEngine.recordPrompt(prompt, fileId, fileContent);
+      
+      // First try to use Cursor Editor if available
+      if (this.cursorEditor) {
+        try {
+          console.log("Attempting to use Cursor Editor integration");
+          
+          // Try to connect to the Cursor Editor
+          const editorConnected = await this.cursorEditor.connect();
+          if (editorConnected) {
+            // We have a connection to the actual Cursor Editor!
+            // Let's extract a file path from our file ID (this would be implementation-specific)
+            const filePath = `file-${fileId}.ts`; // This would need to be mapped to actual file path
+            
+            try {
+              // Send the prompt to the Cursor Editor
+              console.log(`Sending prompt to Cursor Editor for file: ${filePath}`);
+              const editorResponse = await this.cursorEditor.sendPrompt(prompt, filePath);
+              
+              // Process the editor response
+              console.log("Received response from Cursor Editor:", editorResponse);
+              
+              // Record successful interaction
+              this.learningEngine.recordSuccess(prompt, fileContent);
+              this.learningEngine.recordPrompt(prompt, fileId, fileContent, {
+                success: true,
+                responseSnippet: editorResponse.message || "Successfully processed by Cursor AI",
+                generatedCode: editorResponse.codeChanges || ""
+              });
+              
+              // Format the response to match our expected interface
+              return {
+                success: true,
+                suggestions: editorResponse.suggestions || [],
+                codeSnippet: editorResponse.codeChanges || "",
+                detailedAnalysis: editorResponse.explanation || "",
+                fileChanges: editorResponse.fileChanges ? {
+                  fileId,
+                  content: editorResponse.fileChanges
+                } : undefined
+              };
+            } catch (editorError: any) {
+              console.warn("Cursor Editor prompt failed:", editorError.message);
+              // Fall back to our server implementation
+            }
+          } else {
+            console.log("Could not connect to Cursor Editor, falling back to server implementation");
+          }
+        } catch (editorConnectError) {
+          console.warn("Failed to connect to Cursor Editor:", editorConnectError);
+          // Fall back to our server implementation
+        }
+      }
+      
+      // If Cursor Editor is not available or failed, use our server implementation
+      console.log("Using server implementation for AI processing");
       
       // Connect to WebSocket if not connected
       const connected = await this.connect();

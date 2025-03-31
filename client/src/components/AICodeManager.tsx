@@ -4,10 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { 
   AlertCircle, ArrowUpRight, Code, Eye, FileCode, RefreshCw, Terminal,
   CheckCircle2, XCircle, Info, BrainCircuit, ArrowRight, FileSearch,
-  BookmarkCheck, Layers
+  BookmarkCheck, Layers, Settings, Link, Key
 } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import cursorAIService from '@/lib/cursorAIService';
@@ -16,12 +18,17 @@ import { useToast } from '@/hooks/use-toast';
 export default function AICodeManager() {
   const { 
     activeFile, files, logs, issues, tests,
-    runTests, updateFileContent
+    runTests, updateFileContent,
+    setCursorAPIKey, connectToCursorEditor, isCursorEditorConnected
   } = useContext(ProjectContext);
   
   const [aiAnalysisTab, setAiAnalysisTab] = useState('issues');
   const [fileAnalysis, setFileAnalysis] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [editorHost, setEditorHost] = useState('localhost');
+  const [editorPort, setEditorPort] = useState(8765);
+  const [isConnecting, setIsConnecting] = useState(false);
   const { toast } = useToast();
 
   // When the active file changes, analyze it
@@ -125,6 +132,44 @@ export default function AICodeManager() {
         };
     }
   };
+  
+  // Handle API key submission
+  const handleSetApiKey = () => {
+    if (!apiKey.trim()) {
+      toast({
+        title: "Error",
+        description: "API key cannot be empty",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setCursorAPIKey(apiKey);
+    setApiKey(''); // Clear the input field
+  };
+  
+  // Handle Cursor Editor connection
+  const handleConnectToCursor = async () => {
+    if (!editorHost.trim()) {
+      toast({
+        title: "Error",
+        description: "Editor host cannot be empty",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsConnecting(true);
+    
+    try {
+      await connectToCursorEditor({
+        host: editorHost,
+        port: editorPort
+      });
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
   return (
     <Card className="w-full h-full flex flex-col overflow-hidden">
@@ -175,6 +220,12 @@ export default function AICodeManager() {
               className="text-xs rounded-sm data-[state=active]:text-primary data-[state=active]:bg-white data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:rounded-b-none px-3 h-8"
             >
               <FileSearch className="h-3.5 w-3.5 mr-1" /> AI Insights
+            </TabsTrigger>
+            <TabsTrigger 
+              value="settings" 
+              className="text-xs rounded-sm data-[state=active]:text-primary data-[state=active]:bg-white data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:rounded-b-none px-3 h-8"
+            >
+              <Settings className="h-3.5 w-3.5 mr-1" /> Settings
             </TabsTrigger>
           </TabsList>
           
@@ -459,6 +510,119 @@ export default function AICodeManager() {
                   <p className="text-sm">Select a file for AI analysis</p>
                 </div>
               )}
+            </ScrollArea>
+          </TabsContent>
+          
+          <TabsContent value="settings" className="flex-1 pt-3 px-4 overflow-hidden m-0">
+            <ScrollArea className="h-full">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-medium flex items-center gap-1.5 mb-3">
+                    <Settings className="h-4 w-4 text-primary" />
+                    Cursor AI Configuration
+                  </h3>
+                  
+                  <div className="space-y-4">
+                    <div className="bg-white rounded-lg border p-4 shadow-sm">
+                      <h4 className="text-xs font-medium mb-2 flex items-center gap-1.5">
+                        <Key className="h-3.5 w-3.5 text-amber-600" />
+                        API Key Configuration
+                      </h4>
+                      <div className="mb-4">
+                        <p className="text-xs text-neutral-600 mb-2">
+                          Enter your Cursor AI API key to enable enhanced code generation capabilities.
+                        </p>
+                        <div className="flex gap-2">
+                          <Input
+                            type="password"
+                            placeholder="Enter API key"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            className="text-xs h-8"
+                          />
+                          <Button 
+                            size="sm" 
+                            onClick={handleSetApiKey}
+                            className="text-xs h-8"
+                          >
+                            Save Key
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      <h4 className="text-xs font-medium my-2 flex items-center gap-1.5">
+                        <Link className="h-3.5 w-3.5 text-blue-600" />
+                        Cursor Editor Connection
+                      </h4>
+                      <p className="text-xs text-neutral-600 mb-2">
+                        Connect directly to the Cursor Editor for seamless integration.
+                      </p>
+                      
+                      <div className="grid grid-cols-5 gap-2">
+                        <div className="col-span-3">
+                          <label className="text-xs text-neutral-600 block mb-1">Host</label>
+                          <Input
+                            placeholder="localhost"
+                            value={editorHost}
+                            onChange={(e) => setEditorHost(e.target.value)}
+                            className="text-xs h-8"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs text-neutral-600 block mb-1">Port</label>
+                          <Input
+                            type="number"
+                            placeholder="8765"
+                            value={editorPort.toString()}
+                            onChange={(e) => setEditorPort(parseInt(e.target.value) || 8765)}
+                            className="text-xs h-8"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between mt-3">
+                        <div className="flex items-center gap-1.5">
+                          <Badge 
+                            variant="secondary"
+                            className={isCursorEditorConnected ? 
+                              'bg-green-100 text-green-800 hover:bg-green-200' : 
+                              'bg-neutral-100 text-neutral-800 hover:bg-neutral-200'
+                            }
+                          >
+                            {isCursorEditorConnected ? 'Connected' : 'Disconnected'}
+                          </Badge>
+                        </div>
+                        <Button 
+                          size="sm" 
+                          onClick={handleConnectToCursor}
+                          disabled={isConnecting}
+                          className="text-xs h-8"
+                        >
+                          {isConnecting ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            <>
+                              <Link className="h-3 w-3 mr-1" />
+                              Connect
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border p-3 shadow-sm">
+                      <h4 className="text-xs font-medium mb-2 text-blue-800">About Cursor AI Integration</h4>
+                      <p className="text-xs text-neutral-700">
+                        Cursor AI integration provides advanced code generation, analysis, and error detection capabilities to enhance your development workflow. 
+                        Connect directly to your Cursor Editor instance for live coding assistance.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </ScrollArea>
           </TabsContent>
         </Tabs>
