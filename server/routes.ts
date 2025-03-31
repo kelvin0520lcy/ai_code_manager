@@ -7,10 +7,16 @@ import {
   insertLogSchema, insertIssueSchema, insertTestSchema, 
   insertGitOperationSchema, InsertFile 
 } from "@shared/schema";
+import OpenAI from "openai";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  
+  // Initialize OpenAI client
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
   
   // WebSocket for real-time communication with clients
   wss.on('connection', (ws) => {
@@ -240,13 +246,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       throw new Error('File not found');
     }
     
-    // In a real implementation, this would interact with the Cursor AI API
-    // Here we're creating a more detailed and context-aware mock implementation
+    console.log(`Processing prompt: ${prompt} for file: ${file.name}`);
     
-    // Analyze prompt for different types of requests
-    const promptLower = prompt.toLowerCase();
-    
-    // Generate different responses based on prompt content
+    // Prepare response object structure
     let response = {
       prompt,
       response: "Processed prompt successfully",
@@ -256,78 +258,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
       fileChanges: null as any
     };
     
-    // Handle different types of prompts
-    if (promptLower.includes('implement') || promptLower.includes('create') || promptLower.includes('add')) {
-      // Implementation request
-      response.response = "Implementation suggestion created";
+    try {
+      // Determine the type of prompt based on keywords
+      const promptLower = prompt.toLowerCase();
+      const fileContent = file.content || '';
+      const fileType = file.type || 'unknown';
+      let promptType = 'general';
       
-      // Generate relevant code based on file type
-      if (file.type === 'js' || file.type === 'ts') {
-        response.suggestions = [
-          "Add try/catch blocks for error handling",
-          "Consider adding parameter validation",
-          "Implement proper return types"
-        ];
+      if (promptLower.includes('implement') || promptLower.includes('create') || promptLower.includes('add')) {
+        promptType = 'implementation';
+      } else if (promptLower.includes('optimize') || promptLower.includes('improve')) {
+        promptType = 'optimization';
+      } else if (promptLower.includes('debug') || promptLower.includes('fix')) {
+        promptType = 'debugging';
+      } else if (promptLower.includes('explain')) {
+        promptType = 'explanation';
+      } else if (promptLower.includes('analyze') || promptLower.includes('review')) {
+        promptType = 'code_review';
+      }
+      
+      // Create a system prompt based on the type of request
+      let systemPrompt = "";
+      
+      switch (promptType) {
+        case 'implementation':
+          systemPrompt = "You are an AI programming assistant that helps implement code features. Provide practical, clean code examples with error handling and best practices.";
+          break;
+        case 'optimization':
+          systemPrompt = "You are an AI code optimization expert. Analyze the provided code for performance bottlenecks and suggest specific improvements with examples.";
+          break;
+        case 'debugging':
+          systemPrompt = "You are an AI debugging assistant. Identify potential bugs or issues in the code and suggest fixes with clear explanations.";
+          break;
+        case 'explanation':
+          systemPrompt = "You are an AI code explainer. Break down the provided code into simple explanations of what each part does and how they work together.";
+          break;
+        case 'code_review':
+          systemPrompt = "You are an AI code reviewer. Analyze the provided code for best practices, potential issues, and improvements, using a constructive tone.";
+          break;
+        default:
+          systemPrompt = "You are an AI programming assistant that provides helpful code-related information and solutions.";
+      }
+      
+      // Craft a specific user message based on prompt type
+      let userMessage = `
+File: ${file.name} (${fileType})
+Code content:
+\`\`\`
+${fileContent}
+\`\`\`
+
+User request: ${prompt}
+
+Please provide the following in your response:
+1. A brief explanation addressing the request
+2. ${promptType === 'implementation' ? 'Code implementation that solves the request' : 
+     promptType === 'optimization' ? 'Specific optimization suggestions with code examples' :
+     promptType === 'debugging' ? 'An analysis of potential bugs and fixes' :
+     promptType === 'explanation' ? 'A detailed explanation of how the code works' :
+     promptType === 'code_review' ? 'A thorough code review with actionable insights' :
+     'Helpful insights and suggestions related to the request'}
+3. 3-5 bullet point suggestions for improving the code
+`;
+
+      // Send to OpenAI API
+      const chatCompletion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage }
+        ],
+        temperature: 0.2,
+        max_tokens: 2048
+      });
+      
+      // Extract content from OpenAI response
+      const aiResponse = chatCompletion.choices[0].message.content || "No response generated";
+      
+      // Parse the AI response to extract different components
+      const detailedAnalysis = aiResponse.split(/\d+\.\s/).length > 1 
+        ? aiResponse.split(/\d+\.\s/)[1]?.trim() || "" 
+        : aiResponse.split('\n\n')[0]?.trim() || "";
         
-        if (promptLower.includes('api') || promptLower.includes('fetch')) {
-          response.codeSnippet = `async function fetchData(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(\`HTTP error! status: \${response.status}\`);
-    }
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Fetch error:', error);
-    throw error;
-  }
-}`;
-        } else if (promptLower.includes('form') || promptLower.includes('submit')) {
-          response.codeSnippet = `function submitForm(data) {
-  // Form validation
-  if (!data.email || !data.name) {
-    throw new Error('Email and name are required');
-  }
-  
-  // API submission
-  return fetch('https://api.example.com/submit', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  })
-  .then(response => {
-    if (!response.ok) {
-      throw new Error('Form submission failed');
-    }
-    return response.json();
-  })
-  .then(result => {
-    console.log('Success:', result);
-    return result;
-  })
-  .catch(error => {
-    console.error('Error:', error);
-    throw error;
-  });
-}`;
+      // Extract code snippet if present (look for markdown code blocks)
+      const codeBlockMatch = aiResponse.match(/```(?:js|javascript|typescript|ts)?\n([\s\S]*?)\n```/);
+      const codeSnippet = codeBlockMatch ? codeBlockMatch[1].trim() : "";
+      
+      // Extract bullet point suggestions
+      const bulletPointRegex = /[•*-]\s+(.*?)(?=\n[•*-]|\n\n|$)/g;
+      const suggestions: string[] = [];
+      let match;
+      while ((match = bulletPointRegex.exec(aiResponse)) !== null) {
+        if (match[1]) {
+          suggestions.push(match[1].trim());
         }
+      }
+      
+      // Prepare the response object
+      response = {
+        prompt,
+        response: aiResponse.split('\n\n')[0]?.trim() || "AI response processed",
+        suggestions: suggestions.length > 0 ? suggestions : ["Review code structure", "Add proper error handling", "Consider adding more documentation"],
+        codeSnippet,
+        detailedAnalysis,
+        fileChanges: null
+      };
+      
+      // If this is an implementation request and we have a code snippet, consider updating the file
+      if (promptType === 'implementation' && codeSnippet && 
+          (fileContent.includes('// TODO') || fileContent.includes('// Implementation missing'))) {
         
-        // Mock file changes
-        // Only modify the file if it's the active file and has "Implementation missing" or "TODO" comments
-        const fileContent = file.content || '';
-        if (fileContent.includes('// Implementation missing') || fileContent.includes('// TODO')) {
-          let updatedContent = fileContent;
-          
-          // Replace the placeholder in the active file
-          if (promptLower.includes('submitform')) {
-            updatedContent = fileContent.replace(
-              /function\s+submitForm\s*\([^)]*\)\s*\{[^}]*\}/,
-              response.codeSnippet
-            );
-          }
+        // Simple update logic - in a real app, you'd want more sophisticated parsing
+        let updatedContent = fileContent;
+        
+        // Look for TODO comments that match the prompt and replace them with the code
+        const todoRegex = new RegExp(`(\\/\\/\\s*TODO.*?${promptLower.split(' ')[0]}.*?\\n)`, 'i');
+        if (todoRegex.test(fileContent)) {
+          updatedContent = fileContent.replace(todoRegex, `${codeSnippet}\n// Implemented: ${prompt}\n`);
           
           response.fileChanges = {
             fileId,
@@ -335,31 +382,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         }
       }
-    } else if (promptLower.includes('optimize') || promptLower.includes('improve')) {
-      // Optimization request
-      response.response = "Optimization suggestions provided";
-      response.suggestions = [
-        "Consider using memoization to prevent redundant calculations",
-        "Replace inefficient loops with array methods",
-        "Implement proper error boundaries"
-      ];
-      response.detailedAnalysis = "Performance bottlenecks detected in loop operations and error handling patterns. Recommended refactoring to use functional programming approaches and proper error management.";
-    } else if (promptLower.includes('debug') || promptLower.includes('fix')) {
-      // Debugging request
-      response.response = "Debug analysis complete";
-      response.suggestions = [
-        "Check for null/undefined values before accessing properties",
-        "Validate input parameters",
-        "Add proper error handling for edge cases"
-      ];
-      response.detailedAnalysis = "Potential issues include missing null checks, insufficient input validation, and incomplete error handling patterns.";
-    } else if (promptLower.includes('explain')) {
-      // Code explanation request
-      response.response = "Code explanation generated";
-      response.detailedAnalysis = "This code implements a form submission workflow with client-side validation before sending data to a server. It includes error handling for both validation and server response issues.";
+      
+      console.log("AI response processed successfully");
+      
+    } catch (error: any) {
+      console.error("Error with OpenAI API:", error.message);
+      // Fallback response
+      response.response = "Error processing with AI";
+      response.detailedAnalysis = "There was an error connecting to the AI service. Please try again later.";
+      response.suggestions = ["Check your network connection", "Verify API key configuration", "Try a different prompt"];
     }
     
-    // Return the enhanced response
     return response;
   }
   
@@ -368,8 +401,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const contentUpdate: Partial<InsertFile> = { content };
     await storage.updateFile(fileId, contentUpdate as any);
     
-    // Analyze code for issues
-    // This would be more sophisticated in a real implementation
+    console.log(`Processing code update for file ID: ${fileId}`);
+    
+    // Get the file to analyze its context
+    const file = await storage.getFile(fileId);
+    if (!file) {
+      throw new Error('File not found');
+    }
+    
+    // Prepare issues array for storing findings
     const issues: Array<{
       title: string;
       description: string;
@@ -377,6 +417,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       fileId: number;
     }> = [];
     
+    // Basic static analysis checks
     if (content.includes('// TODO') || content.includes('// Implementation missing')) {
       issues.push({
         title: 'Missing Implementation',
@@ -393,6 +434,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
         severity: 'low',
         fileId
       });
+    }
+    
+    try {
+      // Use OpenAI to perform more sophisticated code analysis
+      const systemPrompt = "You are an AI code reviewer specializing in finding potential bugs, security issues, and performance problems. Focus on practical, actionable issues that need to be fixed.";
+      
+      const userMessage = `
+Please analyze this code for potential issues:
+
+File: ${file.name} (${file.type || 'unknown'})
+\`\`\`
+${content}
+\`\`\`
+
+Identify only serious problems that need to be addressed. For each issue:
+1. Provide a clear title
+2. Describe the problem concisely
+3. Rate severity as 'high', 'medium', or 'low'
+4. Return ONLY in this JSON format:
+[
+  {
+    "title": "Issue title",
+    "description": "Brief description of the issue",
+    "severity": "high|medium|low"
+  }
+]
+
+If there are no serious issues beyond what's already noted (TODOs, console logs), return an empty array [].
+`;
+
+      const chatCompletion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage }
+        ],
+        temperature: 0.1,
+        max_tokens: 1024
+      });
+      
+      // Extract content from OpenAI response
+      const aiResponse = chatCompletion.choices[0].message.content || "[]";
+      
+      try {
+        // Find JSON in the response - look for array between square brackets
+        const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          const aiIssues = JSON.parse(jsonMatch[0]);
+          
+          // Add AI-detected issues to our issues array
+          aiIssues.forEach((issue: any) => {
+            if (issue.title && issue.description && issue.severity) {
+              issues.push({
+                title: issue.title,
+                description: issue.description,
+                severity: issue.severity,
+                fileId
+              });
+            }
+          });
+        }
+      } catch (parseError) {
+        console.error("Error parsing AI response:", parseError);
+        // If parsing fails, still continue with the basic issues
+      }
+      
+      // For each detected issue, create an entry in the storage
+      await Promise.all(issues.map(issue => 
+        storage.createIssue({
+          title: issue.title,
+          description: issue.description,
+          severity: issue.severity,
+          fileId,
+          projectId: file.projectId
+        })
+      ));
+      
+      console.log(`Detected ${issues.length} issues in file ${file.name}`);
+      
+    } catch (error: any) {
+      console.error("Error performing AI code analysis:", error.message);
+      // If AI analysis fails, just return the basic issues
     }
     
     return {
