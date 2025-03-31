@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Sample Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+        }
+        .header {
+            background-color: #f5f5f5;
+            padding: 10px;
+            text-align: center;
+        }
+        .image {
+            width: 100%;
+            height: 200px;
+            background-color: #eee;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .content {
+            padding: 15px 0;
+        }
+        .button {
+            background-color: blue;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            cursor: pointer;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Sample Website for AI Analysis</h1>
+            <p>This page contains some intentional issues for the AI to detect</p>
+        </div>
+        
+        <div class="image">
+            <!-- Missing alt text for image accessibility -->
+            <img src="placeholder.jpg" width="400" height="200">
+        </div>
+        
+        <div class="content">
+            <h2>About Our Services</h2>
+            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nullam in dui mauris. Vivamus hendrerit arcu sed erat molestie vehicula.</p>
+            
+            <!-- Text contrast issue - white text on light blue background -->
+            <div style="background-color: lightblue; color: white; padding: 10px;">
+                This text has poor contrast and may be difficult to read.
+            </div>
+            
+            <h2>Contact Us</h2>
+            <!-- Missing form labels for accessibility -->
+            <form>
+                <div>
+                    <input type="text" placeholder="Name">
+                </div>
+                <div>
+                    <input type="email" placeholder="Email">
+                </div>
+                <div>
+                    <textarea placeholder="Message"></textarea>
+                </div>
+                <!-- Non-descriptive button text -->
+                <button class="button">Submit</button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Console log that should be removed -->
+    <script>
+        console.log('Page loaded');
+        
+        // Missing error handling
+        function fetchData() {
+            fetch('https://api.example.com/data')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('results').innerHTML = data;
+                });
+            // No catch block for error handling
+        }
+    </script>
+</body>
+</html>
