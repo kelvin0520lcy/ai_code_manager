@@ -1,0 +1,33 @@
+**Prompt for AI Coding Manager Application Development:**
+
+Create an AI-powered coding manager application that integrates seamlessly with the Cursor AI code editor. The application must fulfill the following requirements:
+
+1. **Website Preview Functionality:**
+   - Implement a feature that allows the AI coding manager to preview the website in a development environment.
+   - Ensure the ability to view real-time changes as code is modified.
+
+2. **Functionality Testing:**
+   - Develop automated testing capabilities to interact with the website as a user would.
+   - Include mechanisms to check for proper functionality, ensuring all features work as intended.
+
+3. **Error Detection and Reporting:**
+   - Integrate a bug identification system that detects malfunctions within the website code.
+   - Enable the AI coding manager to analyze console logs and identify errors or bugs.
+   - Provide detailed feedback to the AI agent for fixes required.
+
+4. **Prompt Generation for Cursor AI:**
+   - Design the AI coding manager to generate clear and concise prompts based on user input.
+   - Ensure prompts direct the Cursor AI to execute specific coding tasks or fixes automatically.
+
+5. **Integration with Version Control:**
+   - Include functionality for the AI coding manager to advise on version control operations such as rolling back changes or committing updates to GitHub.
+   - Allow the AI to suggest improvements for better code practices or application performance.
+
+6. **Automatic Operations:**
+   - Ensure that all actions performed by the AI coding manager, including sending prompts to the Cursor AI and interacting with the website, are executed automatically without manual intervention.
+   - Design the system to handle user inputs that vary from single-line prompts to comprehensive specifications.
+
+7. **User Feedback Loop:**
+   - Implement a feedback system that allows the AI agent to learn from previous interactions and continuously improve its performance based on user specifications and encountered errors.
+
+The application must prioritize efficiency, accuracy, and user experience, allowing developers to streamline their workflow and enhance productivity during the website development process.
