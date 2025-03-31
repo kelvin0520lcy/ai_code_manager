@@ -238,6 +238,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(gitOperations);
   });
   
+  // AI Preview Analysis API route
+  app.post('/api/analyze-preview', async (req, res) => {
+    try {
+      const { 
+        htmlContent, 
+        domSnapshot, 
+        screenshotBase64, 
+        fileType, 
+        fileName, 
+        analysisGoal 
+      } = req.body;
+      
+      if (!htmlContent && !domSnapshot) {
+        return res.status(400).json({ error: 'Either HTML content or DOM snapshot is required' });
+      }
+      
+      console.log(`Processing preview analysis for ${fileName || 'unknown file'}`);
+      
+      // Prepare a system prompt for OpenAI
+      const systemPrompt = `You are an AI web development assistant specializing in UI/UX analysis, accessibility, and code quality. 
+Your task is to analyze HTML content and provide actionable feedback.
+Focus on practical improvements that can be implemented immediately. Be specific and detailed.`;
+      
+      // Build the user message based on available data
+      let userMessage = `Please analyze the following web content`;
+      
+      if (fileName) {
+        userMessage += ` from file ${fileName}`;
+      }
+      
+      if (analysisGoal) {
+        userMessage += ` with a focus on ${analysisGoal.replace(/_/g, ' ')}`;
+      }
+      
+      userMessage += ".\n\n";
+      
+      // Add the HTML content or DOM snapshot
+      if (htmlContent) {
+        userMessage += `HTML Content:\n\`\`\`html\n${htmlContent}\n\`\`\`\n\n`;
+      }
+      
+      if (domSnapshot && domSnapshot !== htmlContent) {
+        userMessage += `DOM Structure:\n\`\`\`html\n${domSnapshot}\n\`\`\`\n\n`;
+      }
+      
+      if (screenshotBase64) {
+        userMessage += "I'm also providing a screenshot of the rendered content (base64 encoded).\n\n";
+      }
+      
+      userMessage += `Please provide a detailed analysis with:
+1. A brief summary of the overall quality and issues
+2. An itemized list of specific issues found (UI/UX, accessibility, structure, code quality, etc.)
+3. An itemized list of actionable suggestions to improve the content
+4. Generate a specific prompt that could be sent to an AI code assistant (like Cursor AI) to implement these improvements
+
+Format your response in JSON with these fields:
+- analysis.summary: Overall assessment
+- analysis.issues: Array of {type, description, severity, codeLocation}
+- analysis.suggestions: Array of {description, priority, codeSnippet}
+- cursorPrompt: A well-crafted prompt for an AI coding assistant to implement the improvements`;
+      
+      try {
+        // Send to OpenAI for analysis
+        const chatCompletion = await openai.chat.completions.create({
+          model: "gpt-4o", // the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.2,
+          max_tokens: 3000
+        });
+        
+        // Parse the JSON response
+        const aiResponseContent = chatCompletion.choices[0].message.content || "";
+        let analysisResult;
+        
+        try {
+          analysisResult = JSON.parse(aiResponseContent);
+        } catch (parseError) {
+          console.error("Error parsing AI response as JSON:", parseError);
+          // Create a fallback structured response
+          analysisResult = {
+            analysis: {
+              summary: "Analysis completed, but response format was irregular.",
+              issues: [
+                { 
+                  type: "Parser Error", 
+                  description: "Could not parse AI analysis into structured format", 
+                  severity: "medium" 
+                }
+              ],
+              suggestions: [
+                { 
+                  description: "Try analyzing a smaller or less complex content excerpt", 
+                  priority: "medium" 
+                }
+              ]
+            },
+            cursorPrompt: "Please improve the HTML structure and styling of the provided content."
+          };
+        }
+        
+        // Return the analysis results
+        res.json(analysisResult);
+        
+      } catch (openaiError: any) {
+        console.error("Error with OpenAI API:", openaiError.message);
+        res.status(500).json({ 
+          error: 'AI analysis failed', 
+          message: 'Error connecting to AI service. Please check API key and try again.'
+        });
+      }
+    } catch (error: any) {
+      console.error("Error processing preview analysis:", error);
+      res.status(400).json({ error: 'Failed to process analysis request' });
+    }
+  });
+  
+  // Cursor AI prompt routing
+  app.post('/api/cursor/send-prompt', async (req, res) => {
+    try {
+      const { prompt, context } = req.body;
+      
+      if (!prompt) {
+        return res.status(400).json({ error: 'Prompt is required' });
+      }
+      
+      console.log("Processing Cursor AI prompt");
+      
+      // In a production implementation, this would communicate with the Cursor API or WebSocket
+      // For now, we'll just log that it would be sent to Cursor
+      console.log(`Would send to Cursor: ${prompt.substring(0, 50)}...`);
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error sending to Cursor:", error);
+      res.status(500).json({ error: 'Failed to send to Cursor AI' });
+    }
+  });
+  
   // Helper functions for processing WebSocket requests
   async function processCursorPrompt(prompt: string, fileId: number) {
     // Get the file to understand its context
