@@ -1,12 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { insertUserSchema, insertProjectSchema, insertFileSchema, insertLogSchema, insertIssueSchema, insertTestSchema, insertGitOperationSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   
   // WebSocket for real-time communication with clients
   wss.on('connection', (ws) => {

@@ -483,32 +483,77 @@ document.addEventListener('DOMContentLoaded', () => {
       setCursorStatus('Processing');
       addLog('log', `Sending prompt to Cursor AI: ${prompt}`);
       
-      // In a real implementation, this would send the prompt to the Cursor AI API
-      // Here we simulate the API call
-      const response = await simulateApiCall(prompt);
+      // Create a WebSocket message
+      const message = {
+        type: 'cursorPrompt',
+        prompt,
+        fileId: activeFile.id
+      };
       
-      if (response.success) {
-        addLog('log', 'Cursor AI processed the prompt successfully');
-        setCursorStatus('Ready');
+      // In a real implementation, this would send the prompt to the Cursor AI API via WebSocket
+      // For local testing/development, we'll use our simulateApiCall
+      if (window.location.hostname === 'localhost') {
+        // Local development simulation
+        const response = await simulateApiCall(prompt);
         
-        // If the response includes code changes, apply them
-        if (response.fileChanges) {
-          const { fileId, content } = response.fileChanges;
-          updateFileContent(fileId, content);
+        if (response.success) {
+          addLog('log', 'Cursor AI processed the prompt successfully');
+          setCursorStatus('Ready');
           
-          // Update git status to reflect changes
-          setGitStatus(prev => ({
-            ...prev,
-            modified: [...new Set([...prev.modified, files.find(f => f.id === fileId)?.name || ''])]
-          }));
-          
-          toast({
-            title: "Code Updated",
-            description: "Cursor AI has updated your code based on the prompt",
-          });
+          // If the response includes code changes, apply them
+          if (response.fileChanges) {
+            const { fileId, content } = response.fileChanges;
+            updateFileContent(fileId, content);
+            
+            // Update git status to reflect changes
+            setGitStatus(prev => {
+              const fileName = files.find(f => f.id === fileId)?.name || '';
+              if (!fileName) return prev;
+              
+              return {
+                ...prev,
+                modified: prev.modified.includes(fileName) 
+                  ? prev.modified 
+                  : [...prev.modified, fileName]
+              };
+            });
+            
+            toast({
+              title: "Code Updated",
+              description: "Cursor AI has updated your code based on the prompt",
+            });
+          }
+        } else {
+          throw new Error(response.error || 'Unknown error');
         }
       } else {
-        throw new Error(response.error || 'Unknown error');
+        // Send message through WebSocket
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const socket = new WebSocket(wsUrl);
+        
+        // Wait for socket to be ready
+        if (socket.readyState !== WebSocket.OPEN) {
+          await new Promise<void>((resolve) => {
+            socket.onopen = () => resolve();
+            // Add timeout to prevent hanging
+            setTimeout(() => resolve(), 3000);
+          });
+        }
+        
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(message));
+          addLog('log', 'Prompt sent to server');
+        } else {
+          throw new Error('WebSocket connection failed');
+        }
+        
+        // Clean up socket when done
+        setTimeout(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.close();
+          }
+        }, 5000);
       }
     } catch (error: any) {
       addLog('error', `Cursor AI error: ${error.message}`);
@@ -571,6 +616,104 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   };
   
+  // WebSocket connection
+  useEffect(() => {
+    // Setup WebSocket connection
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    console.log('Connecting to WebSocket at:', wsUrl);
+    
+    const socket = new WebSocket(wsUrl);
+    
+    socket.onopen = () => {
+      console.log('WebSocket connection established');
+      addLog('log', 'Connected to server');
+    };
+    
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('WebSocket message received:', data);
+        
+        // Handle different message types from the server
+        if (data.type === 'cursorResponse') {
+          setCursorStatus('Ready');
+          // Handle cursor response
+          addLog('log', `Received response from Cursor AI: ${JSON.stringify(data.data)}`);
+        } else if (data.type === 'codeAnalysis') {
+          // Handle code analysis results
+          addLog('log', `Code analysis complete: ${data.data.issues.length} issues found`);
+          
+          // Update issues
+          if (data.data.issues.length > 0) {
+            const newIssues = data.data.issues.map((issue: any) => ({
+              ...issue,
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 5)
+            }));
+            
+            setIssues(prevIssues => {
+              const filteredIssues = prevIssues.filter(issue => issue.fileId !== data.data.fileId);
+              return [...filteredIssues, ...newIssues];
+            });
+          }
+        } else if (data.type === 'testResult') {
+          // Handle test results
+          addLog('log', `Test execution complete`);
+          
+          // Update test status
+          if (Array.isArray(data.data)) {
+            // Multiple tests were run
+            setTests(prevTests => 
+              prevTests.map(test => {
+                const matchingResult = data.data.find((result: any) => result.testId === parseInt(test.id));
+                if (matchingResult) {
+                  return {
+                    ...test,
+                    status: matchingResult.status,
+                    result: matchingResult.result
+                  };
+                }
+                return test;
+              })
+            );
+          } else {
+            // Single test was run
+            setTests(prevTests => 
+              prevTests.map(test => 
+                test.id === data.data.testId.toString() 
+                  ? { ...test, status: data.data.status, result: data.data.result }
+                  : test
+              )
+            );
+          }
+        } else if (data.type === 'error') {
+          // Handle errors
+          addLog('error', `Server error: ${data.message}`);
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+    
+    socket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      addLog('error', 'WebSocket connection error');
+    };
+    
+    socket.onclose = () => {
+      console.log('WebSocket connection closed');
+      addLog('log', 'Disconnected from server');
+    };
+    
+    // Clean up the WebSocket connection when the component is unmounted
+    return () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
+    };
+  }, []);
+  
   // Load data from server on initial load
   useEffect(() => {
     const fetchData = async () => {
@@ -594,10 +737,15 @@ document.addEventListener('DOMContentLoaded', () => {
       // In a real app, we would check which files have changed
       // For now, just simulate changes to the active file
       if (activeFile.type !== 'folder') {
-        setGitStatus(prev => ({
-          ...prev,
-          modified: [...new Set([...prev.modified, activeFile.name])]
-        }));
+        setGitStatus(prev => {
+          const fileName = activeFile.name;
+          return {
+            ...prev,
+            modified: prev.modified.includes(fileName) 
+              ? prev.modified 
+              : [...prev.modified, fileName]
+          };
+        });
       }
     };
     
