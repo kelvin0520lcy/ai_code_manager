@@ -7,6 +7,7 @@ import Home from "@/pages/Home";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect } from "react";
 import { ProjectProvider } from "@/contexts/ProjectContext";
+import cursorAIService from "@/lib/cursorAIService";
 
 function Router() {
   return (
@@ -17,21 +18,31 @@ function Router() {
   );
 }
 
-function App() {
-  const { toast } = useToast();
-
+function AppToastInitializer() {
+  const toast = useToast();
+  
   useEffect(() => {
-    // Initial greeting toast to show the application is running
-    toast({
+    // Initialize the toast for our service
+    cursorAIService.initToast(toast);
+    
+    // Initial greeting toast
+    toast.toast({
       title: "AI Coding Manager Ready",
       description: "Connected and ready to analyze your code",
       className: "border-l-4 border-primary",
     });
+    
+    console.log("Starting AI Code Manager application...");
   }, [toast]);
+  
+  return null;
+}
 
+function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ProjectProvider>
+        <AppToastInitializer />
         <Router />
         <Toaster />
       </ProjectProvider>

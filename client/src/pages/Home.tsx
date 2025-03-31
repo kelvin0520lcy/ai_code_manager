@@ -12,9 +12,11 @@ import TestingPanel from "@/components/TestingPanel";
 import VersionControlPanel from "@/components/VersionControlPanel";
 import StatusBar from "@/components/StatusBar";
 import Toast from "@/components/Toast";
+import AICodeManager from "@/components/AICodeManager";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("prompts");
+  const [rightPanelTab, setRightPanelTab] = useState("aimanager");
 
   return (
     <div className="flex flex-col h-screen bg-neutral-50 font-sans text-neutral-900 overflow-hidden">
@@ -36,8 +38,33 @@ export default function Home() {
 
         {/* Right column - Console, Prompts, Testing */}
         <div className="w-full lg:w-1/3 flex flex-col gap-4 h-full overflow-hidden">
-          <ConsolePanel />
+          {/* Top section with tabs for Cursor AI Manager and Console */}
+          <Tabs value={rightPanelTab} onValueChange={setRightPanelTab} className="flex-1 flex flex-col">
+            <TabsList className="w-full justify-start border-b border-neutral-200 rounded-none">
+              <TabsTrigger 
+                value="aimanager" 
+                className="flex-1 data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
+              >
+                AI Manager
+              </TabsTrigger>
+              <TabsTrigger 
+                value="console" 
+                className="flex-1 data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
+              >
+                Console
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="aimanager" className="flex-1 p-0 mt-0 overflow-hidden">
+              <AICodeManager />
+            </TabsContent>
+            
+            <TabsContent value="console" className="flex-1 p-0 mt-0 overflow-hidden">
+              <ConsolePanel />
+            </TabsContent>
+          </Tabs>
           
+          {/* Bottom section with tabs for Prompts, Testing, and Version Control */}
           <div className="bg-white rounded-lg shadow flex-1 flex flex-col overflow-hidden">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full h-full flex flex-col">
               <TabsList className="w-full justify-start border-b border-neutral-200 rounded-none">
