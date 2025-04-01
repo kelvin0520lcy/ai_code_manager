@@ -256,20 +256,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`Processing preview analysis for ${fileName || 'unknown file'}`);
       
-      // Prepare a system prompt for OpenAI
-      const systemPrompt = `You are an AI web development assistant specializing in UI/UX analysis, accessibility, and code quality. 
-Your task is to analyze HTML content and provide actionable feedback.
-Focus on practical improvements that can be implemented immediately. Be specific and detailed.`;
+      // Advanced system prompt with enhanced instructions for better OpenAI → Cursor AI pipeline
+      const systemPrompt = `You are an expert software architect and technical lead with deep expertise in web development, UI/UX design, accessibility, and software engineering best practices.
+
+ANALYSIS TASK:
+Analyze the provided web page content and/or screenshot to identify issues and improvement opportunities. Your analysis will be used to automatically guide an AI coding assistant (Cursor AI) to implement the necessary changes.
+
+FOCUS AREAS:
+1. Critical Issues:
+   - Accessibility violations (WCAG AA compliance)
+   - Security vulnerabilities (XSS, CSRF, injection risks)
+   - Performance bottlenecks (render-blocking resources, excessive DOM depth)
+   - Semantic HTML structure problems
+   - Mobile responsiveness issues
+
+2. Code Quality:
+   - Maintainability concerns (duplicated code, complex logic)
+   - Browser compatibility issues
+   - Error handling robustness
+   - State management problems
+
+3. User Experience:
+   - Visual hierarchy and information architecture
+   - Interaction design and feedback mechanisms
+   - Loading states and transitions
+   - Form validation and error messaging
+
+RESPONSE FORMAT:
+Structure your response as a JSON object with the following:
+
+{
+  "analysis": {
+    "summary": "A concise executive summary of the key findings",
+    "issues": [
+      {
+        "type": "Category of the issue (Accessibility, Security, Performance, etc.)",
+        "description": "Detailed explanation of the problem with reasoning",
+        "severity": "high|medium|low",
+        "impact": "How this affects users or system integrity",
+        "codeLocation": "The specific code or element causing the issue"
+      }
+    ],
+    "suggestions": [
+      {
+        "description": "Clear explanation of the improvement",
+        "priority": "high|medium|low",
+        "reasoning": "Why this suggestion matters and benefits",
+        "codeSnippet": "Implementation example with comments",
+        "alternatives": "Optional alternative approaches if applicable"
+      }
+    ]
+  },
+  "cursorPrompt": "Detailed instructions for the AI coding assistant"
+}`;
       
-      // Build the user message based on available data
-      let userMessage = `Please analyze the following web content`;
+      // Enhanced user prompt with more specific instructions for Cursor AI
+      let userMessage = `Please perform a comprehensive analysis of this web application`;
       
       if (fileName) {
-        userMessage += ` from file ${fileName}`;
+        userMessage += ` based on the file ${fileName}`;
       }
       
       if (analysisGoal) {
-        userMessage += ` with a focus on ${analysisGoal.replace(/_/g, ' ')}`;
+        const goalContextMap = {
+          'ui_improvement': 'focusing on enhancing the visual design, layout, and user interactions',
+          'bug_detection': 'prioritizing identification of functional errors, unexpected behaviors, and edge cases',
+          'accessibility': 'ensuring WCAG compliance and universal usability for users with disabilities',
+          'performance': 'optimizing loading times, rendering efficiency, and resource utilization',
+          'general': 'covering all aspects of code quality, user experience, and technical implementation'
+        };
+        
+        const analysisContext = goalContextMap[analysisGoal as keyof typeof goalContextMap] || 
+                               `with a focus on ${analysisGoal.replace(/_/g, ' ')}`;
+        userMessage += ` ${analysisContext}`;
       }
       
       userMessage += ".\n\n";
@@ -284,20 +343,25 @@ Focus on practical improvements that can be implemented immediately. Be specific
       }
       
       if (screenshotBase64) {
-        userMessage += "I'm also providing a screenshot of the rendered content (base64 encoded).\n\n";
+        userMessage += "I'm also providing a screenshot of the rendered content for visual analysis.\n\n";
       }
       
-      userMessage += `Please provide a detailed analysis with:
-1. A brief summary of the overall quality and issues
-2. An itemized list of specific issues found (UI/UX, accessibility, structure, code quality, etc.)
-3. An itemized list of actionable suggestions to improve the content
-4. Generate a specific prompt that could be sent to an AI code assistant (like Cursor AI) to implement these improvements
+      userMessage += `For the 'cursorPrompt' field, create an exceptional technical specification that will:
 
-Format your response in JSON with these fields:
-- analysis.summary: Overall assessment
-- analysis.issues: Array of {type, description, severity, codeLocation}
-- analysis.suggestions: Array of {description, priority, codeSnippet}
-- cursorPrompt: A well-crafted prompt for an AI coding assistant to implement the improvements`;
+1. Begin with a clear overview of all required changes and their purpose
+2. Break down implementation into discrete, sequenced steps with clear rationale
+3. Reference specific elements, components, or sections that need modification
+4. Provide annotated code examples for complex changes
+5. Include verification steps to confirm changes work as expected
+6. Anticipate and address potential edge cases or conflicts
+
+The Cursor AI assistant will use these instructions verbatim to implement changes, so be precise, thorough, and provide all context needed for successful implementation.
+
+Format your response as JSON with these fields:
+- analysis.summary: Executive summary of findings
+- analysis.issues: Array of {type, description, severity, impact, codeLocation}
+- analysis.suggestions: Array of {description, priority, reasoning, codeSnippet, alternatives}
+- cursorPrompt: Comprehensive implementation instructions for Cursor AI`;
       
       try {
         let analysisResult;
@@ -346,36 +410,41 @@ Format your response in JSON with these fields:
           
           analysisResult = {
             "analysis": {
-              "summary": "The HTML content has several issues that should be addressed to improve accessibility, user experience, and code quality.",
+              "summary": "The HTML content has several critical issues affecting accessibility, security, and user experience that should be addressed promptly.",
               "issues": [
                 {
                   "type": "Accessibility",
-                  "description": "Images are missing alt text, making the content inaccessible to screen readers.",
+                  "description": "Images are missing alt text, making the content inaccessible to screen readers and violating WCAG 2.1 Success Criterion 1.1.1 (Level A).",
                   "severity": "high",
+                  "impact": "Users with visual impairments using screen readers cannot understand the content of images, creating an exclusionary experience.",
                   "codeLocation": "<img src=\"placeholder.jpg\" width=\"400\" height=\"200\">"
                 },
                 {
                   "type": "Accessibility",
-                  "description": "Form inputs are missing associated labels, making the form difficult to use with assistive technologies.",
+                  "description": "Form inputs lack associated labels, creating significant barriers for assistive technology users and violating WCAG 2.1 Success Criterion 3.3.2 (Level A).",
                   "severity": "high",
+                  "impact": "Screen reader users cannot determine the purpose of form fields, and voice recognition software users cannot target inputs by name.",
                   "codeLocation": "<input type=\"text\" placeholder=\"Name\">"
                 },
                 {
-                  "type": "Contrast",
-                  "description": "White text on a light blue background has insufficient contrast ratio, making it difficult to read for some users.",
+                  "type": "User Experience",
+                  "description": "White text on a light blue background has insufficient contrast ratio of approximately 2.1:1, well below the WCAG AA minimum requirement of 4.5:1.",
                   "severity": "medium",
+                  "impact": "Content is difficult to read for users with low vision, color blindness, or when viewing in bright light conditions.",
                   "codeLocation": "<div style=\"background-color: lightblue; color: white; padding: 10px;\">"
                 },
                 {
-                  "type": "Code Quality",
-                  "description": "Console log statements should be removed in production code.",
+                  "type": "Performance",
+                  "description": "Console log statements in production code create unnecessary browser operations and expose implementation details.",
                   "severity": "low",
+                  "impact": "Minor performance impact and potential information leakage that could aid attackers in understanding application behavior.",
                   "codeLocation": "console.log('Page loaded');"
                 },
                 {
                   "type": "Error Handling",
-                  "description": "Fetch API call is missing error handling with a catch block.",
+                  "description": "Fetch API calls lack error handling, potentially leading to unhandled promise rejections and broken user experiences when network issues occur.",
                   "severity": "medium",
+                  "impact": "Users will see no feedback when operations fail, creating confusion and frustration with no path to recovery.",
                   "codeLocation": "fetch('https://api.example.com/data')"
                 }
               ],
@@ -383,36 +452,203 @@ Format your response in JSON with these fields:
                 {
                   "description": "Add descriptive alt text to all images",
                   "priority": "high",
-                  "codeSnippet": "<img src=\"placeholder.jpg\" width=\"400\" height=\"200\" alt=\"Description of image content\">"
+                  "reasoning": "Descriptive alt text ensures screen reader users can understand image content and supports SEO by providing additional context for search engines.",
+                  "codeSnippet": "<!-- Before -->\n<img src=\"placeholder.jpg\" width=\"400\" height=\"200\">\n\n<!-- After -->\n<img src=\"placeholder.jpg\" width=\"400\" height=\"200\" alt=\"Description of image content\" loading=\"lazy\">",
+                  "alternatives": "For decorative images that add no content value, use empty alt text (alt=\"\") to indicate they should be skipped by screen readers."
                 },
                 {
-                  "description": "Add proper form labels with 'for' attributes that match input IDs",
+                  "description": "Add proper form labels with semantic connections to inputs",
                   "priority": "high",
-                  "codeSnippet": "<label for=\"name\">Name:</label>\n<input type=\"text\" id=\"name\" placeholder=\"Name\">"
+                  "reasoning": "Properly labeled form controls are essential for accessibility and improve usability for all users by providing larger click targets.",
+                  "codeSnippet": "<!-- Before -->\n<input type=\"text\" placeholder=\"Name\">\n\n<!-- After -->\n<div class=\"form-field\">\n  <label for=\"user-name\">Name</label>\n  <input type=\"text\" id=\"user-name\" placeholder=\"Enter your full name\" aria-required=\"true\">\n</div>",
+                  "alternatives": "For complex forms, consider using fieldset and legend elements to group related inputs, especially for radio buttons and checkboxes."
                 },
                 {
-                  "description": "Improve color contrast by using darker text on light backgrounds",
+                  "description": "Fix color contrast issues to meet WCAG AA standards",
                   "priority": "medium",
-                  "codeSnippet": "<div style=\"background-color: lightblue; color: #333; padding: 10px;\">\n  This text has better contrast and is easier to read.\n</div>"
+                  "reasoning": "Improving contrast to at least 4.5:1 ensures text is readable for users with low vision or color perception deficiencies and in varying lighting conditions.",
+                  "codeSnippet": "/* Before */\n<div style=\"background-color: lightblue; color: white; padding: 10px;\">\n  Hard to read text\n</div>\n\n/* After */\n<div style=\"background-color: #1c7ed6; color: white; padding: 10px;\">\n  Improved contrast text\n</div>",
+                  "alternatives": "Using CSS custom properties (variables) for colors makes it easier to maintain consistent color contrast throughout the application."
                 },
                 {
-                  "description": "Remove console.log statements or replace with a proper logging system",
+                  "description": "Implement a proper logging strategy",
                   "priority": "low",
-                  "codeSnippet": "// Use a proper logging system instead\n// console.log('Page loaded');"
+                  "reasoning": "A structured logging approach improves debugging capabilities while keeping production code clean and avoiding information leakage.",
+                  "codeSnippet": "// Before\nconsole.log('Page loaded');\n\n// After\nconst logger = {\n  isDevelopment: process.env.NODE_ENV === 'development',\n  log: function(message) {\n    if (this.isDevelopment) {\n      console.log(`[LOG] ${message}`);\n    }\n  },\n  error: function(message) {\n    if (this.isDevelopment) {\n      console.error(`[ERROR] ${message}`);\n    }\n    // In production, you might send errors to a monitoring service\n  }\n};\n\nlogger.log('Page loaded');",
+                  "alternatives": "Consider integrating a dedicated logging library like winston or loglevel for more advanced features."
                 },
                 {
-                  "description": "Add error handling to fetch calls",
+                  "description": "Add comprehensive error handling to network requests",
                   "priority": "medium",
-                  "codeSnippet": "fetch('https://api.example.com/data')\n  .then(response => response.json())\n  .then(data => {\n    document.getElementById('results').innerHTML = data;\n  })\n  .catch(error => {\n    console.error('Error fetching data:', error);\n    document.getElementById('results').innerHTML = 'Failed to load data';\n  });"
-                },
-                {
-                  "description": "Use semantic HTML elements to improve structure and accessibility",
-                  "priority": "medium",
-                  "codeSnippet": "<header>\n  <h1>Sample Website for AI Analysis</h1>\n</header>\n<main>\n  <section>\n    <h2>About Our Services</h2>\n    <p>Content here...</p>\n  </section>\n</main>"
+                  "reasoning": "Robust error handling improves user experience by providing meaningful feedback and recovery options when operations fail.",
+                  "codeSnippet": "// Before\nfetch('https://api.example.com/data')\n\n// After\nasync function fetchData() {\n  try {\n    const controller = new AbortController();\n    const timeoutId = setTimeout(() => controller.abort(), 5000);\n    \n    const response = await fetch('https://api.example.com/data', {\n      signal: controller.signal\n    });\n    clearTimeout(timeoutId);\n    \n    if (!response.ok) {\n      throw new Error(`HTTP error! status: ${response.status}`);\n    }\n    \n    const data = await response.json();\n    updateUI(data);\n  } catch (error) {\n    if (error.name === 'AbortError') {\n      showErrorMessage('Request timed out. Please try again.');\n    } else {\n      showErrorMessage('Failed to load data. Please check your connection.');\n      logger.error(`Fetch error: ${error.message}`);\n    }\n    showFallbackContent();\n  }\n}\n\nfetchData();",
+                  "alternatives": "For multiple related API calls, consider implementing a centralized fetch wrapper with consistent error handling and retries."
                 }
               ]
             },
-            "cursorPrompt": "Please improve this HTML page focusing on accessibility, contrast, and code quality. Specifically:\n1. Add appropriate alt text to all images\n2. Add proper form labels with 'for' attributes matching input IDs\n3. Fix color contrast issues (white text on light blue background)\n4. Remove console.log statements\n5. Add error handling to fetch API calls\n6. Use more semantic HTML elements where appropriate\n\nMake these changes while preserving the overall structure and functionality of the page."
+            "cursorPrompt": `# Comprehensive HTML Accessibility and Quality Improvements
+
+## Overview of Required Changes
+This HTML document requires several critical improvements to meet accessibility standards, enhance user experience, and improve code quality. The changes will focus on:
+
+1. Making all content accessible to screen readers and assistive technologies
+2. Ensuring sufficient color contrast for all text elements
+3. Implementing proper error handling for asynchronous operations
+4. Improving the semantic structure of the document
+5. Removing development artifacts from production code
+
+## Implementation Steps
+
+### 1. Fix Image Accessibility
+Locate all <img> elements in the document that are missing alt attributes:
+
+\`\`\`html
+<!-- FIND -->
+<img src="placeholder.jpg" width="400" height="200">
+
+<!-- REPLACE WITH -->
+<img src="placeholder.jpg" width="400" height="200" alt="Description of image content" loading="lazy">
+\`\`\`
+
+For each image, provide a descriptive alt text that conveys the image's purpose and content. For decorative images that don't add meaning, use empty alt text (alt="") to indicate they should be skipped by screen readers.
+
+### 2. Implement Proper Form Accessibility
+
+Find all form input elements without associated labels:
+
+\`\`\`html
+<!-- FIND -->
+<input type="text" placeholder="Name">
+
+<!-- REPLACE WITH -->
+<div class="form-field">
+  <label for="user-name">Name</label>
+  <input type="text" id="user-name" placeholder="Enter your full name" aria-required="true">
+</div>
+\`\`\`
+
+Ensure each input has:
+- A uniquely associated label with matching 'for' and 'id' attributes
+- Appropriate ARIA attributes (aria-required, aria-describedby, etc.)
+- Clear, descriptive placeholder text (as a supplement, not replacement for labels)
+
+### 3. Fix Color Contrast Issues
+
+Identify all instances of poor text contrast:
+
+\`\`\`html
+<!-- FIND -->
+<div style="background-color: lightblue; color: white; padding: 10px;">
+  Hard to read text
+</div>
+
+<!-- REPLACE WITH -->
+<div style="background-color: #1c7ed6; color: white; padding: 10px;">
+  Improved contrast text
+</div>
+\`\`\`
+
+Use the WebAIM Contrast Checker tool to verify that all text meets WCAG AA standards (4.5:1 for normal text, 3:1 for large text).
+
+### 4. Remove Console Logs
+
+Search for and remove all console.log statements:
+
+\`\`\`javascript
+// FIND
+console.log('Page loaded');
+
+// REPLACE WITH
+// Remove completely or implement proper logging
+\`\`\`
+
+If logging is necessary for debugging, implement a configurable logging utility that can be disabled in production.
+
+### 5. Add Error Handling to Fetch Calls
+
+Improve all fetch calls with proper error handling:
+
+\`\`\`javascript
+// FIND
+fetch('https://api.example.com/data')
+
+// REPLACE WITH
+async function fetchData() {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch('https://api.example.com/data', {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(\`HTTP error! status: \${response.status}\`);
+    }
+    
+    const data = await response.json();
+    updateUI(data);
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      showErrorMessage('Request timed out. Please try again.');
+    } else {
+      showErrorMessage('Failed to load data. Please check your connection.');
+      console.error(\`Fetch error: \${error.message}\`);
+    }
+    showFallbackContent();
+  }
+}
+
+fetchData();
+\`\`\`
+
+### 6. Improve HTML Semantic Structure
+
+Enhance the document structure with semantic HTML elements:
+
+\`\`\`html
+<!-- FIND -->
+<div class="header">
+  <div class="title">Sample Website for AI Analysis</div>
+</div>
+<div class="content">
+  <div class="section">
+    <div class="section-title">About Our Services</div>
+    <div class="section-content">Content here...</div>
+  </div>
+</div>
+
+<!-- REPLACE WITH -->
+<header>
+  <h1>Sample Website for AI Analysis</h1>
+</header>
+<main>
+  <section>
+    <h2>About Our Services</h2>
+    <p>Content here...</p>
+  </section>
+</main>
+\`\`\`
+
+## Verification Steps
+
+After implementing these changes, verify the improvements:
+
+1. Test with a screen reader (like NVDA, VoiceOver, or ChromeVox) to ensure all content is accessible
+2. Use the WAVE browser extension to check for remaining accessibility issues
+3. Test the page with browser developer tools in "high contrast" mode
+4. Verify fetch calls work correctly with simulated network failures
+5. Check responsive behavior on different screen sizes
+
+## Edge Cases to Handle
+
+1. Ensure the page remains usable with JavaScript disabled
+2. Add appropriate keyboard navigation support for interactive elements
+3. Verify that error states are visually distinct and provide clear recovery instructions
+4. Ensure the page handles slow connections gracefully with loading indicators
+
+Implement these changes while preserving the overall layout, design, and functionality of the original page.`
           };
         }
         
