@@ -564,7 +564,13 @@ export class CursorAIService {
       const wsUrl = `${protocol}//${window.location.host}/ws`;
       console.log("Connecting to WebSocket at:", wsUrl);
 
-      this.wsConnection = new WebSocket(wsUrl);
+      try {
+        this.wsConnection = new WebSocket(wsUrl);
+      } catch (error) {
+        console.error("Error creating WebSocket:", error);
+        this.connecting = false;
+        return false;
+      }
 
       return new Promise<boolean>((resolve) => {
         if (!this.wsConnection) {
@@ -580,14 +586,20 @@ export class CursorAIService {
           // Send any queued messages
           while (this.messageQueue.length > 0) {
             const queuedMessage = this.messageQueue.shift();
-            this.wsConnection?.send(JSON.stringify(queuedMessage));
+            if (queuedMessage && this.wsConnection && this.wsConnection.readyState === WebSocket.OPEN) {
+              try {
+                this.wsConnection.send(JSON.stringify(queuedMessage));
+              } catch (err) {
+                console.error("Error sending queued message:", err);
+              }
+            }
           }
           
           resolve(true);
         };
 
-        this.wsConnection.onclose = () => {
-          console.log("WebSocket connection closed");
+        this.wsConnection.onclose = (event) => {
+          console.log(`WebSocket connection closed: ${event.code} - ${event.reason || 'No reason provided'}`);
           this.wsConnection = null;
           this.connecting = false;
         };
@@ -598,7 +610,12 @@ export class CursorAIService {
           resolve(false);
         };
 
-        this.wsConnection.onmessage = this.handleWebSocketMessage.bind(this);
+        // Use try-catch when binding the message handler
+        try {
+          this.wsConnection.onmessage = this.handleWebSocketMessage.bind(this);
+        } catch (err) {
+          console.error("Error binding message handler:", err);
+        }
 
         // Set a timeout in case the connection hangs
         setTimeout(() => {

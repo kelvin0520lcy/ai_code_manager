@@ -22,33 +22,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
   wss.on('connection', (ws) => {
     console.log('Client connected');
     
+    // Send initial connection confirmation
+    try {
+      ws.send(JSON.stringify({ 
+        type: 'connection', 
+        success: true, 
+        message: 'WebSocket connection established' 
+      }));
+    } catch (err) {
+      console.error('Error sending connection confirmation:', err);
+    }
+    
     ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message.toString());
+        console.log(`Received WebSocket message type: ${data.type}`);
         
         // Handle different message types
         if (data.type === 'cursorPrompt') {
           // Process Cursor AI prompt
           // In a real implementation, this would interact with the Cursor AI API
-          const response = await processCursorPrompt(data.prompt, data.fileId);
-          ws.send(JSON.stringify({ type: 'cursorResponse', success: true, data: response }));
+          try {
+            const response = await processCursorPrompt(data.prompt, data.fileId);
+            ws.send(JSON.stringify({ type: 'cursorResponse', success: true, data: response }));
+          } catch (promptError: any) {
+            console.error('Error processing cursor prompt:', promptError);
+            ws.send(JSON.stringify({ 
+              type: 'cursorResponse', 
+              success: false, 
+              error: promptError.message || 'Error processing cursor prompt'
+            }));
+          }
         } else if (data.type === 'updateCode') {
           // Update file content
-          // This would trigger code analysis, error detection, etc.
-          const response = await processCodeUpdate(data.fileId, data.content);
-          ws.send(JSON.stringify({ type: 'codeAnalysis', success: true, data: response }));
+          try {
+            // This would trigger code analysis, error detection, etc.
+            const response = await processCodeUpdate(data.fileId, data.content);
+            ws.send(JSON.stringify({ type: 'codeAnalysis', success: true, data: response }));
+          } catch (codeError: any) {
+            console.error('Error updating code:', codeError);
+            ws.send(JSON.stringify({ 
+              type: 'codeAnalysis', 
+              success: false, 
+              error: codeError.message || 'Error updating code'
+            }));
+          }
         } else if (data.type === 'runTest') {
           // Run automated testing
-          const testResult = await runTest(data.testId, data.fileIds);
-          ws.send(JSON.stringify({ type: 'testResult', success: true, data: testResult }));
+          try {
+            const testResult = await runTest(data.testId, data.fileIds);
+            ws.send(JSON.stringify({ type: 'testResult', success: true, data: testResult }));
+          } catch (testError: any) {
+            console.error('Error running tests:', testError);
+            ws.send(JSON.stringify({ 
+              type: 'testResult', 
+              success: false, 
+              error: testError.message || 'Error running tests'
+            }));
+          }
+        } else {
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            message: `Unsupported message type: ${data.type}` 
+          }));
         }
       } catch (error: any) {
-        ws.send(JSON.stringify({ type: 'error', message: error.message }));
+        console.error('WebSocket message error:', error);
+        try {
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            message: error.message || 'Error processing message'
+          }));
+        } catch (sendError) {
+          console.error('Error sending error message:', sendError);
+        }
       }
     });
     
-    ws.on('close', () => {
-      console.log('Client disconnected');
+    ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
+    });
+    
+    ws.on('close', (code, reason) => {
+      console.log(`Client disconnected. Code: ${code}, Reason: ${reason || 'No reason provided'}`);
     });
   });
   
