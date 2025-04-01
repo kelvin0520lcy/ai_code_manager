@@ -1,7 +1,8 @@
-import { createContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import cursorAIService, { CursorEditorConnector } from '@/lib/cursorAIService';
+import { autonomousAgent } from '@/lib/autonomousAgent';
 
 interface User {
   id: string;
@@ -96,6 +97,11 @@ interface ProjectContextType {
   connectToCursorEditor: (options: { host: string, port: number }) => Promise<boolean>;
   isCursorEditorConnected: boolean;
   
+  // Background automation
+  isAutonomousMode: boolean;
+  toggleAutonomousMode: () => void;
+  autonomousStatus: 'idle' | 'running' | 'paused' | 'error';
+  
   appVersion: string;
 }
 
@@ -134,6 +140,11 @@ export const ProjectContext = createContext<ProjectContextType>({
   setCursorAPIKey: () => {},
   connectToCursorEditor: async () => false,
   isCursorEditorConnected: false,
+  
+  // Background automation
+  isAutonomousMode: false,
+  toggleAutonomousMode: () => {},
+  autonomousStatus: 'idle',
   
   appVersion: 'v1.0.0'
 });
@@ -539,6 +550,73 @@ document.addEventListener('DOMContentLoaded', () => {
   const [cursorStatus, setCursorStatus] = useState<string>('Ready');
   const [isCursorEditorConnected, setIsCursorEditorConnected] = useState<boolean>(false);
   const appVersion = 'v1.0.0';
+  
+  // Autonomous mode for background operations
+  const [isAutonomousMode, setIsAutonomousMode] = useState<boolean>(false);
+  const [autonomousStatus, setAutonomousStatus] = useState<'idle' | 'running' | 'paused' | 'error'>('idle');
+  
+  // Reference to the preview frame for autonomous agent
+  const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
+  
+  // Toggle autonomous mode
+  const toggleAutonomousMode = () => {
+    const newMode = !isAutonomousMode;
+    setIsAutonomousMode(newMode);
+    
+    if (newMode) {
+      // Start autonomous agent when enabled
+      addLog('log', 'Starting autonomous background processing...');
+      
+      // Register callbacks for the agent
+      autonomousAgent.registerCallbacks({
+        onStatusChange: (status) => {
+          setAutonomousStatus(status);
+          addLog('log', `Autonomous agent status: ${status}`);
+        },
+        onLog: (type, message) => {
+          addLog(type, message);
+        },
+        onFileUpdate: (fileId, content) => {
+          updateFileContent(fileId, content);
+        },
+        onTestsRun: (testId, fileIds) => {
+          runTests(testId, fileIds);
+        },
+        onAnalysisComplete: (analysis) => {
+          // Handle analysis results
+          if (analysis.issues?.length > 0) {
+            toast({
+              title: "Issues Detected",
+              description: `Found ${analysis.issues.length} issues in your application`,
+              variant: "destructive",
+            });
+          }
+        }
+      });
+      
+      // Set preview frame if available
+      if (previewFrameRef.current) {
+        autonomousAgent.setPreviewFrame(previewFrameRef.current);
+      }
+      
+      // Start the agent
+      autonomousAgent.start();
+      
+      toast({
+        title: "Autonomous Mode Enabled",
+        description: "AI will now automatically improve your code in the background",
+      });
+    } else {
+      // Stop autonomous agent when disabled
+      autonomousAgent.stop();
+      addLog('log', 'Autonomous background processing stopped');
+      
+      toast({
+        title: "Autonomous Mode Disabled",
+        description: "Background processing has been stopped",
+      });
+    }
+  };
   
   const sendPromptToCursor = async (prompt: string) => {
     try {
@@ -1102,6 +1180,11 @@ document.addEventListener('DOMContentLoaded', () => {
     setCursorAPIKey,
     connectToCursorEditor,
     isCursorEditorConnected,
+    
+    // Autonomous background processing
+    isAutonomousMode,
+    toggleAutonomousMode,
+    autonomousStatus,
     
     appVersion
   };

@@ -1,8 +1,8 @@
-import { useContext, useRef, useState } from 'react';
+import { useContext, useRef, useState, useEffect } from 'react';
 import { ProjectContext } from '@/contexts/ProjectContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Maximize2, Wand, AlertTriangle, Check } from 'lucide-react';
+import { RefreshCw, Maximize2, Wand, AlertTriangle, Check, Brain, BrainCircuit } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import html2canvas from 'html2canvas';
@@ -19,13 +19,33 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import PreviewAnalysisPanel from './PreviewAnalysisPanel';
 
 export default function PreviewPanel() {
-  const { activeFile, cursorStatus, isCursorEditorConnected } = useContext(ProjectContext);
+  const { 
+    activeFile, 
+    cursorStatus, 
+    isCursorEditorConnected,
+    isAutonomousMode,
+    toggleAutonomousMode,
+    autonomousStatus
+  } = useContext(ProjectContext);
+  
   const { toast } = useToast();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<PreviewAnalysisResponse | null>(null);
   const [activeTab, setActiveTab] = useState<string>('preview');
   const [isFullscreenAnalysisVisible, setIsFullscreenAnalysisVisible] = useState(false);
+
+  // Effect to connect the iframe to the autonomous agent when it loads
+  useEffect(() => {
+    // Import the autonomous agent dynamically to avoid circular dependencies
+    import('@/lib/autonomousAgent').then(({ autonomousAgent }) => {
+      if (iframeRef.current) {
+        autonomousAgent.setPreviewFrame(iframeRef.current);
+      }
+    }).catch(error => {
+      console.error("Failed to import autonomous agent:", error);
+    });
+  }, [iframeRef.current]);
 
   const handleRefresh = () => {
     if (iframeRef.current && activeFile && activeFile.type.includes('html')) {
@@ -82,10 +102,7 @@ export default function PreviewPanel() {
       // Send to server for analysis
       const result = await analyzePreview({
         htmlContent: activeFile.content,
-        domSnapshot: domSnapshot || undefined,
         screenshotBase64: screenshotBase64 || undefined,
-        fileType: activeFile.type,
-        fileName: activeFile.name,
         analysisGoal: 'general'
       });
 
@@ -114,6 +131,16 @@ export default function PreviewPanel() {
       toast({
         title: "Cursor not connected",
         description: "Please connect to Cursor editor in the AI settings before sending analysis.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Make sure we have a cursor prompt
+    if (!analysisResult.cursorPrompt) {
+      toast({
+        title: "Missing prompt",
+        description: "No cursor prompt was generated for this analysis.",
         variant: "destructive",
       });
       return;
@@ -149,6 +176,29 @@ export default function PreviewPanel() {
           <CardTitle className="text-sm font-medium flex items-center justify-between">
             <span>Preview</span>
             <div className="flex items-center gap-2">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button 
+                      variant={isAutonomousMode ? "default" : "ghost"}
+                      size="icon" 
+                      className={`h-6 w-6 ${isAutonomousMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''}`}
+                      onClick={toggleAutonomousMode}
+                      disabled={!isCursorEditorConnected}
+                    >
+                      <BrainCircuit className="h-4 w-4" />
+                      {autonomousStatus === 'running' && 
+                        <span className="absolute top-0 right-0 h-2 w-2 bg-green-500 rounded-full animate-pulse"></span>
+                      }
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{isAutonomousMode ? 'Disable' : 'Enable'} Autonomous Mode</p>
+                    {!isCursorEditorConnected && <p className="text-xs text-red-500">Requires Cursor connection</p>}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -214,7 +264,7 @@ export default function PreviewPanel() {
               <TabsTrigger value="preview">Preview</TabsTrigger>
               <TabsTrigger value="analysis" disabled={!analysisResult && !isAnalyzing}>
                 Analysis
-                {analysisResult && (
+                {analysisResult && analysisResult.analysis.issues && (
                   <Badge variant="outline" className="ml-2 bg-blue-50">
                     {analysisResult.analysis.issues.length}
                   </Badge>
@@ -283,7 +333,7 @@ export default function PreviewPanel() {
                         <p className="text-sm">{analysisResult.analysis.summary}</p>
                       </div>
                       
-                      {analysisResult.analysis.issues.length > 0 && (
+                      {analysisResult.analysis.issues && analysisResult.analysis.issues.length > 0 && (
                         <div>
                           <h4 className="text-xs font-medium mb-2 text-neutral-600">Issues</h4>
                           <div className="space-y-2">
@@ -292,11 +342,11 @@ export default function PreviewPanel() {
                                 <div className="flex items-start gap-2">
                                   <AlertTriangle className="h-3.5 w-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
                                   <div>
-                                    <p className="font-medium text-amber-800">{issue.type}</p>
+                                    <p className="font-medium text-amber-800">{issue.severity}</p>
                                     <p className="mt-0.5 text-neutral-700">{issue.description}</p>
-                                    {issue.codeLocation && (
+                                    {issue.element && (
                                       <code className="mt-1 block text-[10px] bg-white p-1 rounded border border-amber-100">
-                                        {issue.codeLocation}
+                                        {issue.element}
                                       </code>
                                     )}
                                   </div>
@@ -307,7 +357,7 @@ export default function PreviewPanel() {
                         </div>
                       )}
                       
-                      {analysisResult.analysis.suggestions.length > 0 && (
+                      {analysisResult.analysis.suggestions && analysisResult.analysis.suggestions.length > 0 && (
                         <div>
                           <h4 className="text-xs font-medium mb-2 text-neutral-600">Suggestions</h4>
                           <div className="space-y-2">
@@ -317,9 +367,9 @@ export default function PreviewPanel() {
                                   <Check className="h-3.5 w-3.5 text-emerald-600 mt-0.5 flex-shrink-0" />
                                   <div>
                                     <p className="mt-0.5 text-neutral-700">{suggestion.description}</p>
-                                    {suggestion.codeSnippet && (
+                                    {suggestion.code && (
                                       <code className="mt-1 block text-[10px] bg-white p-1 rounded border border-emerald-100">
-                                        {suggestion.codeSnippet}
+                                        {suggestion.code}
                                       </code>
                                     )}
                                   </div>

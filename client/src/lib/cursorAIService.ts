@@ -1029,7 +1029,7 @@ export class CursorAIService {
 }
 
 // Create a single instance for the application
-export const cursorAIService = new CursorAIService();
+const cursorAIService = new CursorAIService();
 
 // The singleton should be initialized by components directly
 // cursorAIService.initToast(useToast());
